@@ -4,7 +4,8 @@
 # 使用方法: ./gotty-service.sh {start|stop|restart|status} [terminal_type] [port]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GOTTY_BIN="gotty"
+GOTTY_BIN=$(which gotty 2>/dev/null || echo "gotty")
+Q_CLI_BIN=$(which q 2>/dev/null || echo "q")
 PID_DIR="$SCRIPT_DIR/pids"
 LOG_DIR="$SCRIPT_DIR/logs"
 
@@ -12,7 +13,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
 # 默认配置
-DEFAULT_TERMINAL="bash"
+DEFAULT_TERMINAL="qcli"
 DEFAULT_PORT="8080"
 DEFAULT_USER="demo"
 DEFAULT_PASS="password123"
@@ -69,6 +70,32 @@ is_running() {
     return 1
 }
 
+# 健康检查函数
+health_check() {
+    local terminal_type=${1:-$DEFAULT_TERMINAL}
+    local port=${2:-$DEFAULT_PORT}
+    local max_attempts=3
+    local attempt=0
+    
+    log "执行健康检查 (${terminal_type}:${port})..."
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -u "$DEFAULT_USER:$DEFAULT_PASS" "http://localhost:$port" -I -s > /dev/null 2>&1; then
+            success "健康检查通过 (尝试 $((attempt + 1))/$max_attempts)"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        if [ $attempt -lt $max_attempts ]; then
+            log "健康检查失败，等待重试... ($attempt/$max_attempts)"
+            sleep 2
+        fi
+    done
+    
+    warning "健康检查失败，服务可能未正常启动"
+    return 1
+}
+
 # 启动服务
 start_service() {
     local terminal_type=${1:-$DEFAULT_TERMINAL}
@@ -84,8 +111,9 @@ start_service() {
     log "启动 $terminal_type 终端服务 (端口: $port)..."
     
     # 检查gotty二进制文件
-    if [ ! -f "$GOTTY_BIN" ]; then
+    if ! command -v "$GOTTY_BIN" &> /dev/null; then
         error "未找到gotty二进制文件: $GOTTY_BIN"
+        error "请安装gotty: https://github.com/yudai/gotty"
         return 1
     fi
     
@@ -102,7 +130,19 @@ start_service() {
             command="bash"
             ;;
         "qcli")
-            command="q chat"
+            # 检查Q CLI是否可用
+            if ! command -v "$Q_CLI_BIN" &> /dev/null; then
+                error "未找到Q CLI二进制文件: $Q_CLI_BIN"
+                error "请确保Q CLI已正确安装并在PATH中"
+                return 1
+            fi
+            
+            # 测试Q CLI是否正常工作
+            if ! "$Q_CLI_BIN" --version &> /dev/null; then
+                warning "Q CLI版本检查失败，但继续尝试启动..."
+            fi
+            
+            command="$Q_CLI_BIN chat"
             ;;
         "python"|"python3")
             command="python3"
@@ -150,11 +190,11 @@ start_service() {
         log "密码: $DEFAULT_PASS"
         log "日志文件: $log_file"
         
-        # 测试连接
-        if curl -u "$DEFAULT_USER:$DEFAULT_PASS" "http://localhost:$port" -I -s > /dev/null 2>&1; then
-            success "连接测试通过"
+        # 执行健康检查
+        if health_check "$terminal_type" "$port"; then
+            success "服务健康检查通过"
         else
-            warning "连接测试失败，请检查服务状态"
+            warning "服务健康检查失败，但服务已启动"
         fi
         
         return 0
@@ -313,17 +353,18 @@ show_help() {
     echo "  stop-all  停止所有服务"
     echo
     echo "参数:"
-    echo "  terminal_type  终端类型 (默认: bash)"
-    echo "                 支持: bash, python, mysql, redis, htop"
+    echo "  terminal_type  终端类型 (默认: qcli)"
+    echo "                 支持: qcli, bash, python, mysql, redis, htop"
     echo "  port          端口号 (默认: 8080)"
     echo
     echo "示例:"
-    echo "  $0 start                    # 启动默认bash终端 (端口8080)"
-    echo "  $0 start python 8081        # 启动Python REPL (端口8081)"
-    echo "  $0 stop bash 8080           # 停止bash终端"
-    echo "  $0 restart python 8081      # 重启Python REPL"
+    echo "  $0 start                    # 启动默认Q CLI终端 (端口8080)"
+    echo "  $0 start qcli 8081          # 启动Q CLI (端口8081)"
+    echo "  $0 start python 8082        # 启动Python REPL (端口8082)"
+    echo "  $0 stop qcli 8080           # 停止Q CLI终端"
+    echo "  $0 restart qcli 8081        # 重启Q CLI"
     echo "  $0 status                   # 显示所有服务状态"
-    echo "  $0 status bash 8080         # 显示特定服务状态"
+    echo "  $0 status qcli 8080         # 显示特定服务状态"
     echo "  $0 stop-all                 # 停止所有服务"
     echo
     echo "默认认证信息:"

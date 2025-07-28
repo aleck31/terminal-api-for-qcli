@@ -1,0 +1,4 @@
+logs/*
+pids/*
+tmp/
+.kiro

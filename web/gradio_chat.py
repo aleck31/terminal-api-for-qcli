@@ -17,7 +17,7 @@ class TerminalChatBot:
     
     def __init__(self):
         self.api_client = TerminalAPIClient()
-        self.current_directory = "/home/ubuntu/labzone/idears"
+        self.current_directory = "/tmp/terminalbot"
         self.terminal_context = {
             "working_directory": self.current_directory,
             "last_command": None,
@@ -28,19 +28,16 @@ class TerminalChatBot:
         """获取帮助信息"""
         return """🖥️ **Terminal API Chat 使用指南**
 
-**执行命令的方式：**
-- 直接输入Q CLI命令或自然语言问题
+**交互方式说明：**
+- 聊天交互：直接输入问题，如 "帮我写一个Python脚本"
+- 命令翻译：输入自然语言描述，如 "列出当前目录的所有文件"
+- 系统诊断：输入 "/clear" 清空对话历史
+- 帮助信息：输入 "/help" 查看Q CLI帮助
 
 **输出显示说明：**
 - 📤 **标准输出**: 命令的正常输出结果（普通消息）
 - ⚠️ **错误输出**: 命令的错误信息（可折叠显示）
 - ✅/❌ **执行完成**: 命令执行统计信息（可折叠显示）
-
-**支持的Q CLI命令类型：**
-- 聊天交互：直接输入问题，如 "帮我写一个Python脚本"
-- 命令翻译：输入自然语言描述，如 "列出当前目录的所有文件"
-- 系统诊断：输入 "q doctor" 进行系统检查
-- 帮助信息：输入 "q --help" 查看Q CLI帮助
 
 **安全特性：**
 - 危险命令自动拦截

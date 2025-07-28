@@ -38,6 +38,9 @@ class WebSocketHandler:
         ws_scheme = "wss" if parsed_url.scheme == "https" else "ws"
         self.ws_url = f"{ws_scheme}://{parsed_url.netloc}/ws"
         
+        # 调试信息
+        self.logger.info(f"WebSocket URL: {self.ws_url}")
+        
         # 认证头
         credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
         self.headers = {
@@ -134,56 +137,8 @@ class WebSocketHandler:
             
             self.logger.debug(f"接收原始消息: {repr(message)}")
             
-            # 处理Gotty消息格式
-            if isinstance(message, str) and len(message) > 0:
-                # 1. 检查标准Gotty格式 ('0' + base64)
-                if message.startswith('0'):
-                    try:
-                        import base64
-                        decoded_data = base64.b64decode(message[1:]).decode('utf-8')
-                        return {"type": "output", "data": decoded_data}
-                    except:
-                        return {"type": "output", "data": message[1:]}
-                
-                elif message.startswith('1'):
-                    return {"type": "pong", "data": message[1:]}
-                elif message.startswith('2'):
-                    return {"type": "title", "data": message[1:]}
-                
-                # 2. 尝试直接base64解码（处理分片情况）
-                else:
-                    # 添加到缓冲区
-                    self.message_buffer += message
-                    
-                    # 尝试解码缓冲区
-                    try:
-                        import base64
-                        decoded_data = base64.b64decode(self.message_buffer).decode('utf-8')
-                        # 成功解码，清空缓冲区
-                        self.message_buffer = ""
-                        return {"type": "output", "data": decoded_data}
-                    except:
-                        # 解码失败，检查缓冲区大小
-                        if len(self.message_buffer) > self.max_buffer_size:
-                            # 缓冲区过大，清空并返回原始数据
-                            result = self.message_buffer
-                            self.message_buffer = ""
-                            return {"type": "output", "data": result}
-                        
-                        # 继续等待更多数据
-                        return None
-            
-            # 尝试解析JSON（备用方案）
-            try:
-                data = json.loads(message)
-                self.logger.debug(f"接收JSON消息: {data}")
-                return data
-            except json.JSONDecodeError:
-                # 如果不是JSON格式，包装为输出消息
-                return {
-                    "type": "output",
-                    "data": str(message)
-                }
+            # 使用智能消息处理
+            return self._process_message_smart(message)
                 
         except websocket.WebSocketTimeoutException:
             # 超时是正常的，返回None
@@ -260,12 +215,14 @@ class WebSocketHandler:
                 # 终端输出数据（base64编码）
                 try:
                     decoded_data = base64.b64decode(data).decode('utf-8')
-                    cleaned_data = clean_ansi(decoded_data).strip()
+                    cleaned_data = clean_ansi(decoded_data)
                     self.logger.debug(f"标准格式解码: {repr(cleaned_data)}")
                     self._clear_buffers()  # 清空缓冲区
                     return {"type": "output", "data": cleaned_data}
                 except Exception as e:
                     self.logger.warning(f"标准格式解码失败: {e}")
+                    # 如果解码失败，尝试作为普通文本返回
+                    self._clear_buffers()
                     return {"type": "output", "data": data}
             
             elif msg_type == '1':
@@ -286,16 +243,15 @@ class WebSocketHandler:
                 return {"type": "reconnect", "data": data}
         
         # 2. 尝试直接解码整个消息（可能是完整的base64）
-        if self._looks_like_base64(message) and len(message) > 10:
+        if self._looks_like_base64(message):
             try:
                 decoded_data = base64.b64decode(message).decode('utf-8')
-                cleaned_data = clean_ansi(decoded_data).strip()
-                if cleaned_data:  # 只有非空内容才返回
-                    self.logger.debug(f"直接解码成功: {repr(cleaned_data)}")
-                    self._clear_buffers()  # 清空缓冲区
-                    return {"type": "output", "data": cleaned_data}
-            except:
-                pass
+                cleaned_data = clean_ansi(decoded_data)
+                self.logger.debug(f"直接解码成功: {repr(cleaned_data)}")
+                self._clear_buffers()  # 清空缓冲区
+                return {"type": "output", "data": cleaned_data}
+            except Exception as e:
+                self.logger.debug(f"直接解码失败: {e}")
         
         # 3. 添加到片段缓冲区并尝试重组
         self.fragment_buffer.append(message)
@@ -305,13 +261,7 @@ class WebSocketHandler:
         if result:
             return result
         
-        # 4. 检查是否是明显的非base64短消息
-        if len(message) < 10 and not self._looks_like_base64(message):
-            # 可能是错误消息或状态信息，直接返回
-            self._clear_buffers()
-            return {"type": "output", "data": message}
-        
-        # 5. 检查缓冲区是否过大
+        # 4. 检查缓冲区是否过大
         total_buffer_size = sum(len(frag) for frag in self.fragment_buffer)
         if total_buffer_size > self.max_buffer_size:
             self.logger.warning(f"缓冲区过大({total_buffer_size}字符)，清空并返回原始数据")
@@ -319,7 +269,7 @@ class WebSocketHandler:
             self._clear_buffers()
             return {"type": "output", "data": combined_data}
         
-        # 6. 继续等待更多片段
+        # 5. 继续等待更多片段
         return None
     
     def _try_reassemble_fragments(self) -> Optional[Dict[str, Any]]:
@@ -343,16 +293,16 @@ class WebSocketHandler:
                 if self._looks_like_base64(combined):
                     try:
                         decoded_data = base64.b64decode(combined).decode('utf-8')
-                        cleaned_data = ansi_escape.sub('', decoded_data).strip()
+                        cleaned_data = ansi_escape.sub('', decoded_data)
                         
-                        if cleaned_data:  # 只有非空内容才返回
-                            self.logger.debug(f"重组解码成功: {repr(cleaned_data)}")
-                            
-                            # 移除已使用的片段
-                            self.fragment_buffer = self.fragment_buffer[:start_idx] + self.fragment_buffer[end_idx:]
-                            
-                            return {"type": "output", "data": cleaned_data}
-                    except:
+                        self.logger.debug(f"重组解码成功: {repr(cleaned_data)}")
+                        
+                        # 移除已使用的片段
+                        self.fragment_buffer = self.fragment_buffer[:start_idx] + self.fragment_buffer[end_idx:]
+                        
+                        return {"type": "output", "data": cleaned_data}
+                    except Exception as e:
+                        self.logger.debug(f"重组解码失败: {e}")
                         continue
         
         return None

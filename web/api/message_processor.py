@@ -50,8 +50,18 @@ class MessageProcessor:
         return any(dangerous in command_lower for dangerous in self.dangerous_commands)
     
     def clean_ansi_codes(self, text: str) -> str:
-        """清理ANSI颜色代码"""
-        return self.ansi_escape.sub('', text)
+        """彻底清理ANSI代码和控制字符"""
+        # 1. 清理ANSI转义序列
+        text = self.ansi_escape.sub('', text)
+        
+        # 2. 清理其他控制字符（除了基本的空白字符）
+        control_chars = re.compile(r'[\x00-\x08\x0B-\x1F\x7F-\x9F]')
+        text = control_chars.sub('', text)
+        
+        # 3. 清理多余的空白
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
     
     def start_command_execution(self, command: str) -> Tuple[str, str, Dict[str, Any]]:
         """开始命令执行"""

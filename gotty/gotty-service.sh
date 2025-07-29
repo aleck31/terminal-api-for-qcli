@@ -4,10 +4,11 @@
 # 使用方法: ./gotty-service.sh {start|stop|restart|status} [terminal_type] [port]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GOTTY_BIN=$(which gotty 2>/dev/null || echo "gotty")
 Q_CLI_BIN=$(which q 2>/dev/null || echo "q")
-PID_DIR="$SCRIPT_DIR/pids"
-LOG_DIR="$SCRIPT_DIR/logs"
+PID_DIR="$PROJECT_ROOT/pids"
+LOG_DIR="$PROJECT_ROOT/logs"
 
 # 创建必要目录
 mkdir -p "$PID_DIR" "$LOG_DIR"

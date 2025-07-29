@@ -52,8 +52,7 @@ tmp/
 ehthumbs.db
 Thumbs.db
 
-# GoTTY binaries and archives
-gotty
+# Binaries and archives
 *.tar.gz
 *.zip
 

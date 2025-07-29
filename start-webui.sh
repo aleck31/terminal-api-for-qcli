@@ -23,12 +23,12 @@ if curl -u demo:password123 http://localhost:8080 -I -s > /dev/null 2>&1; then
     echo "✅ Terminal API服务运行正常"
 else
     echo "⚠️  Terminal API服务未运行，正在启动..."
-    ./gotty-service.sh start qcli 8080
+    ./gotty/gotty-service.sh start qcli 8080
     if [ $? -eq 0 ]; then
         echo "✅ Terminal API服务启动成功"
     else
         echo "❌ Terminal API服务启动失败"
-        echo "请手动启动: ./gotty-service.sh start qcli"
+        echo "请手动启动: ./gotty/gotty-service.sh start qcli"
     fi
 fi
 
@@ -36,7 +36,7 @@ fi
 cd "$(dirname "$0")"
 
 # 使用uv运行Gradio应用
-uv run web/gradio_chat.py
+PYTHONPATH=. uv run python webui/gradio_chat.py
 
 echo
 echo "🚀 使用uv启动Gradio WebUI..."

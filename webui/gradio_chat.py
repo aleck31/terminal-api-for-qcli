@@ -3,13 +3,17 @@
 Terminal API Demo - Gradio ChatInterface WebUI
 """
 
+import sys
+import os
+import time
+import logging
+from typing import Generator, List, Dict, Any
 import gradio as gr
 from gradio import ChatMessage
-import time
-from typing import Generator, List, Dict, Any
-import logging
 
-# 导入新的API模块
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from api.terminal_client import TerminalAPIClient
 
 class TerminalChatBot:

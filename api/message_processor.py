@@ -5,7 +5,7 @@
 
 import time
 import re
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -41,27 +41,14 @@ class MessageProcessor:
             ':(){ :|:& };:', 'chmod -R 777 /', 'chown -R'
         ]
         
-        # 更全面的ANSI转义序列正则表达式
-        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\d+|\w)')
+        # 导入ANSI清理器
+        from utils.ansi_cleaner import ansi_cleaner
+        self.ansi_cleaner = ansi_cleaner
     
     def is_dangerous_command(self, command: str) -> bool:
         """检查是否为危险命令"""
         command_lower = command.lower().strip()
         return any(dangerous in command_lower for dangerous in self.dangerous_commands)
-    
-    def clean_ansi_codes(self, text: str) -> str:
-        """彻底清理ANSI代码和控制字符"""
-        # 1. 清理ANSI转义序列
-        text = self.ansi_escape.sub('', text)
-        
-        # 2. 清理其他控制字符（除了基本的空白字符）
-        control_chars = re.compile(r'[\x00-\x08\x0B-\x1F\x7F-\x9F]')
-        text = control_chars.sub('', text)
-        
-        # 3. 清理多余的空白
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return text
     
     def start_command_execution(self, command: str) -> Tuple[str, str, Dict[str, Any]]:
         """开始命令执行"""
@@ -84,8 +71,11 @@ class MessageProcessor:
             "status": "pending"
         })
     
-    def process_websocket_message(self, message: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+    def process_websocket_message(self, message: Dict[str, Any]) -> Optional[Tuple[str, str, Dict[str, Any]]]:
         """处理WebSocket消息"""
+        if not message or not isinstance(message, dict):
+            return None
+            
         msg_type = message.get("type", "")
         data = message.get("data", "")
         
@@ -93,7 +83,11 @@ class MessageProcessor:
             return None
         
         # 清理ANSI代码
-        clean_data = self.clean_ansi_codes(data).strip()
+        clean_data = self.ansi_cleaner.clean(data).strip()
+        
+        # 检查是否为有意义的内容，过滤掉加载动画等无用信息
+        if not self.ansi_cleaner.is_meaningful_content(data):
+            return None  # 过滤掉无意义的消息
         
         if msg_type == "output":
             # 标准输出

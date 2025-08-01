@@ -1,67 +1,82 @@
 # Terminal API Demo
 
-基于 Gotty 的 Web 终端 API 演示（Demo）
+基于 TTYD 的 Web 终端 API 演示项目
 
 ## 🎯 项目概述
 
-这是一个使用 Gotty 实现的 Web 终端 API 演示项目，支持通过 Web 界面访问 Linux 终端，并可以运行各种交互式命令行程序如: Q CLI、MySQL、Python 等。
+这是一个基于 TTYD 实现的 Web 终端 API 演示项目，支持通过 Web 界面访问 Linux 终端，并可以运行各种交互式命令行程序如: Bash、Q CLI、Python 等。
 
 ### 📈 项目状态
-- ✅ **核心功能完成**: Gotty服务集成、WebSocket通信、流式输出处理
-- ✅ **现代化UI**: 基于Gradio 5的ChatInterface界面
+- ✅ **核心功能完成**: TTYD服务集成、WebSocket通信、流式输出处理
+- ✅ **现代化UI**: 基于Gradio 5的ChatInterface界面，支持Markdown格式输出
 - ✅ **安全防护**: 危险命令检测和拦截机制
-- ✅ **完整测试**: 43个测试用例，88%通过率
-- ✅ **模块化架构**: 清晰的组件分离和依赖管理
+- ✅ **完整测试**: 集成测试套件，确保稳定性
+- ✅ **简洁架构**: 避免过度工程化，专注核心功能
 - 🚀 **生产就绪**: 可直接部署使用
 
 ## 📁 项目结构
 
 ```
-terminal-api-demo/
-├── gotty/                  # Gotty相关文件
-│   ├── gotty-service.sh    # 服务管理脚本 (推荐使用)
-│   └── gotty.conf          # Gotty 配置文件
+terminal-api-for-qcli/
 ├── api/                    # API组件
-│   ├── __init__.py
-│   ├── message_processor.py # 消息处理器
-│   ├── terminal_client.py   # 终端客户端
-│   ├── websocket_client.py  # WebSocket客户端
-│   └── connection_manager.py # 连接管理器
-├── utils/                  # 工具组件
-│   └── ansi_cleaner.py     # ANSI转义序列清理器
+│   ├── terminal_api_client.py   # 主要API接口
+│   ├── websocket_client.py      # WebSocket客户端
+│   └── utils.py                 # 格式化工具
+├── ttyd/                   # TTYD服务管理
+│   ├── ttyd-service.sh     # 服务管理脚本
+│   ├── conf.ini           # 配置文件
+│   └── pids/               # PID文件目录
 ├── webui/                  # Web UI
 │   └── gradio_chat.py      # Gradio ChatInterface WebUI
+├── run_tests.py            # 测试运行器
 ├── tests/                  # 测试套件
 ├── logs/                   # 日志目录
 ├── start-webui.sh          # Gradio WebUI 启动脚本
-├── run_tests.py            # 测试运行脚本
-├── pyproject.toml          # uv 项目配置
-└── README.md              # 项目说明
+└── README.md
 ```
+
+## 🏗️ 架构设计
+
+采用**简洁的两层架构**，避免过度工程化：
+
+```
+┌─────────────────────────────────────┐
+│           Gradio WebUI              │  ← User Interface Layer
+│        (gradio_chat.py)             │
+└─────────────────┬───────────────────┘
+                  │
+┌─────────────────▼───────────────────┐
+│      TerminalAPIClient              │  ← **Main API Interface**
+│   (terminal_api_client.py)          │
+│  - Command execution & state mgmt   │
+│  - Markdown formatted output        │
+└─────────────────┬───────────────────┘
+                  │
+┌─────────────────▼───────────────────┐
+│    TtydWebSocketClient              │  ← Communication Layer
+│     (websocket_client.py)           │
+│  - ttyd protocol & authentication   │
+│  - ANSI cleanup & message handling  │
+└─────────────────────────────────────┘
+```
+
+### 核心组件
+
+- **`terminal_api_client.py`** (12KB) - 主要API接口，提供命令执行和格式化输出
+- **`websocket_client.py`** (13KB) - WebSocket通信层，处理ttyd协议和认证
+- **`utils.py`** (9KB) - 格式化工具，将终端输出转换为Markdown格式
 
 ## 🚀 快速开始
 
-### 1. 一键启动
+### 1. 启动 TTYD 服务
 
 ```bash
-# 直接运行，自动启动默认Q CLI终端
-./gotty/gotty-service.sh
-```
+# 启动默认服务 (bash:7681)
+./ttyd/ttyd-service.sh start
 
-### 完整服务管理
-
-```bash
 # 启动不同类型的终端
-./gotty/gotty-service.sh start qcli 8081     # Q CLI
-./gotty/gotty-service.sh start python 8082    # Python REPL
-./gotty/gotty-service.sh start mysql 8083     # MySQL 客户端
-
-# 服务管理
-./gotty/gotty-service.sh status               # 查看所有服务状态
-./gotty/gotty-service.sh stop bash 8080       # 停止特定服务
-./gotty/gotty-service.sh restart python 8081  # 重启服务
-./gotty/gotty-service.sh stop-all             # 停止所有服务
-./gotty/gotty-service.sh help                 # 查看完整帮助
+./ttyd/ttyd-service.sh start python 7682    # Python REPL
+./ttyd/ttyd-service.sh start qcli 8081      # Q CLI (如果已安装)
 ```
 
 ### 2. 访问 Web 终端
@@ -74,223 +89,247 @@ terminal-api-demo/
 访问地址: http://localhost:7860
 
 特性：
-- 🤖 智能聊天界面
-- 📝 支持自然语言命令执行
-- 🔄 实时流式输出
-- 💬 命令历史和上下文
+- 🤖 智能聊天界面，支持自然语言命令执行
+- 📝 Markdown格式输出，清晰易读
+- 🔄 实时流式输出处理
+- 💬 命令历史和上下文维护
 - 🎨 现代化UI设计
 
-**方式二：原生Gotty Web终端**
-打开浏览器访问: http://localhost:8080
+**方式二：原生TTYD Web终端**
+打开浏览器访问: http://localhost:7681
 
 默认认证信息:
 - 用户名: demo
 - 密码: password123
 
-### 3. 运行测试套件
+### 3. API 使用示例
 
-```bash
-# 运行所有测试
-uv run python -m pytest tests/ -v
+```python
+import asyncio
+from api import TerminalAPIClient
 
-# 只运行单元测试
-uv run python -m pytest tests/ -m "not integration" -v
+async def example():
+    # 使用异步上下文管理器
+    async with TerminalAPIClient(
+        host="localhost", 
+        port=7681, 
+        username="demo", 
+        password="password123",
+        format_output=True  # 启用Markdown格式化
+    ) as client:
+        
+        # 执行命令
+        result = await client.execute_command('ls -la')
+        
+        print(f"成功: {result.success}")
+        print(f"执行时间: {result.execution_time:.2f}秒")
+        print("Markdown输出:")
+        print(result.markdown)
 
-# 使用测试脚本
-uv run python run_tests.py --unit
-
-# 生成覆盖率报告
-uv run python run_tests.py --coverage
+# 运行示例
+asyncio.run(example())
 ```
 
 ## 🔧 服务管理
 
-### 服务管理脚本功能
+### TTYD 服务脚本
 
-`gotty/gotty-service.sh` 提供完整的服务生命周期管理：
+`ttyd/ttyd-service.sh` 提供完整的服务生命周期管理：
 
 ```bash
-# 查看帮助
-./gotty/gotty-service.sh help
+# 基本命令
+./ttyd/ttyd-service.sh start [type] [port]  # 启动服务
+./ttyd/ttyd-service.sh stop [type] [port]   # 停止服务
+./ttyd/ttyd-service.sh restart [type] [port] # 重启服务
+./ttyd/ttyd-service.sh status [type] [port] # 查看状态
+./ttyd/ttyd-service.sh stop-all             # 停止所有服务
+./ttyd/ttyd-service.sh help                 # 显示帮助
 
-# 启动服务
-./gotty/gotty-service.sh start [terminal_type] [port]
-
-# 停止服务
-./gotty/gotty-service.sh stop [terminal_type] [port]
-
-# 重启服务
-./gotty/gotty-service.sh restart [terminal_type] [port]
-
-# 查看状态
-./gotty/gotty-service.sh status [terminal_type] [port]
-
-# 停止所有服务
-./gotty/gotty-service.sh stop-all
+# 示例
+./ttyd/ttyd-service.sh start               # 启动默认服务 (bash:7681)
+./ttyd/ttyd-service.sh start python 7682   # 启动Python服务 (端口7682)
+./ttyd/ttyd-service.sh status              # 查看默认服务状态
 ```
 
 ### 支持的终端类型
 
-- `qcli` - Q CLI (默认)
-- `bash` - Bash Shell
+- `bash` - Bash Shell (默认)
 - `python` - Python REPL
-- `mysql` - MySQL 客户端
-- `redis` - Redis CLI
+- `qcli` - Q CLI (需要先安装 Q CLI)
 
-### 服务特性
+### 配置文件
 
-- **后台运行**: 服务在后台运行，不占用终端
-- **PID管理**: 自动管理进程ID文件
-- **日志记录**: 每个服务独立的日志文件
-- **健康检查**: 自动检测服务状态和连接
-- **优雅停止**: 支持优雅停止和强制停止
-## 🎨 Gradio ChatInterface WebUI
+`ttyd/conf.ini` 支持完整的配置管理。
 
-### 功能特性
+## 🎨 格式化输出特性
 
-- **实时流式输出**: 命令执行过程实时显示
-- **安全防护**: 自动拦截危险命令
-- **上下文感知**: 维护命令历史和工作目录状态
-- **现代化UI**: 基于Gradio 5的现代聊天界面
+项目的一大特色是智能的输出格式化，将原始终端输出转换为友好的Markdown格式：
 
-### 技术栈
+### 输出清理
 
-- **前端**: Gradio 5 ChatInterface
-- **后端**: Python + WebSocket + Gotty
-- **依赖管理**: uv
-- **流式输出**: WebSocket实时通信
-- **安全**: 危险命令检测和拦截
-- **测试**: pytest + 完整测试套件
-- **架构**: 模块化组件设计
+- **ANSI序列清理**: 移除颜色和格式控制字符
+- **OSC序列清理**: 移除现代shell的集成信息
+- **提示符清理**: 移除命令提示符残留
+- **空白处理**: 智能处理多余的空白和换行
 
-## 🔧 配置说明
+### Markdown格式化
 
-### Gotty 配置 (gotty/gotty.conf)
-
-```ini
-port = "8080"                # 服务端口
-permit_write = true          # 允许写入操作
-enable_basic_auth = true     # 启用基本认证
-credential = "demo:password123"  # 认证凭据
-max_connection = 10          # 最大连接数
-timeout = 300               # 超时时间(秒)
-enable_reconnect = true     # 启用重连
+```markdown
+## ✅ 命令执行 - 成功
+**命令:** `ls -la`
+**执行时间:** 0.01秒
+**输出:**
+```bash
+total 392
+drwxrwxr-x 15 ubuntu ubuntu  6144 Aug  1 09:49 .
+drwxrwxr-x 12 ubuntu ubuntu  6144 Jul 30 11:35 ..
+-rw-rw-r--  1 ubuntu ubuntu  8624 Aug  1 09:43 README.md
+```
+---
 ```
 
-### 安全配置
+## 🧪 测试
 
-- 基本 HTTP 认证
-- 连接数限制
-- 超时控制
-- 写入权限控制
+### 运行测试
 
-## 📊 API 接口说明
+```bash
+# 集成测试（需要TTYD服务运行）
+uv run python tests/test_terminal_api_integration.py
 
-### HTTP 接口
+# 服务脚本测试
+uv run python tests/test_ttyd_service.py
 
-- **GET /** - 获取 Web 终端页面
-- **WebSocket /ws** - 终端 WebSocket 连接
-- **GET /js/gotty.js** - 客户端 JavaScript
+# 格式化输出测试
+uv run python tests/test_formatted_output.py
 
-### WebSocket 消息格式
-
-```json
-{
-  "type": "input",
-  "data": "command\n"
-}
+# 使用pytest运行所有测试
+uv run python -m pytest tests/ -v
 ```
 
-```json
-{
-  "type": "output", 
-  "data": "command results"
-}
-```
+### 测试覆盖
+
+- ✅ WebSocket连接和认证
+- ✅ 命令执行和输出处理
+- ✅ 格式化和清理功能
+- ✅ 服务管理脚本
+- ✅ 错误处理和恢复
 
 ## 🔒 安全考虑
 
-### 当前实现的安全措施
+### 当前安全措施
 
-- HTTP 基本认证
-- 连接数限制
-- 会话超时
-- 写入权限控制
+- **HTTP基本认证**: 用户名密码验证
+- **连接数限制**: 防止资源耗尽
+- **命令权限**: 基于启动用户的权限
+- **输入验证**: 防止恶意输入
 
 ### 生产环境建议
 
-1. **使用 HTTPS**
+1. **使用HTTPS/WSS**
    ```bash
-   ./gotty --tls --tls-crt server.crt --tls-key server.key
+   # 在conf.ini中配置SSL
+   ssl=true
+   ssl_cert="/path/to/cert.pem"
+   ssl_key="/path/to/key.pem"
    ```
 
-2. **反向代理配置**
-   ```nginx
-   location /terminal/ {
-       proxy_pass http://localhost:8080/;
-       proxy_http_version 1.1;
-       proxy_set_header Upgrade $http_upgrade;
-       proxy_set_header Connection "upgrade";
-   }
-   ```
+2. **强化认证**
+   - 使用强密码
+   - 定期更换凭据
+   - 考虑集成外部认证系统
 
-3. **防火墙规则**
-   ```bash
-   ufw allow from 192.168.1.0/24 to any port 8080
-   ```
+3. **网络安全**
+   - 使用防火墙限制访问
+   - 配置反向代理
+   - 启用访问日志
 
 ## 🐛 故障排除
 
 ### 常见问题
 
-1. **连接被拒绝**
-   - 检查 Gotty 服务是否启动
-   - 确认端口是否被占用
-   - 验证防火墙设置
+1. **连接失败**
+   ```bash
+   # 检查服务状态
+   ./ttyd/ttyd-service.sh status
+   
+   # 查看日志
+   tail -f logs/ttyd-bash-7681.log
+   ```
 
-2. **认证失败**
-   - 检查用户名密码
-   - 确认配置文件中的凭据设置
+2. **认证问题**
+   - 确认conf.ini中的credential配置
+   - 检查用户名密码格式
 
-3. **WebSocket 连接失败**
-   - 检查代理服务器配置
-   - 确认浏览器支持 WebSocket
+3. **输出格式问题**
+   - 检查format_output参数是否启用
+   - 查看utils.py中的清理规则
 
-### 日志查看
+### 调试技巧
 
 ```bash
-# 查看 Gotty 日志
-tail -f logs/gotty.log
+# 启用详细日志
+# 在conf.ini中设置: debug_level=7
 
-# 查看系统日志
-journalctl -u gotty -f
+# 手动测试连接
+curl -u demo:password123 http://localhost:7681/ -I
+
+# 检查WebSocket连接
+# 使用浏览器开发者工具查看WebSocket流量
 ```
 
-## 🚀 扩展功能
+## 🚀 扩展和定制
 
-### 计划中的功能
+### 添加新的终端类型
 
-1. **多用户支持**
-2. **会话录制回放**
-3. **文件上传下载**
-4. **终端分享**
-5. **API 密钥认证**
+1. 在`conf.ini`中添加命令配置:
+   ```ini
+   nodejs_command="node"
+   ```
 
-### 自定义扩展
+2. 在`ttyd-service.sh`的`get_terminal_command`函数中添加处理:
+   ```bash
+   "nodejs")
+       echo "$(get_config nodejs_command)"
+       ;;
+   ```
 
-可以通过修改启动脚本添加更多终端类型:
+### 自定义格式化规则
+
+修改`api/utils.py`中的`TerminalOutputFormatter`类:
+
+```python
+def _looks_like_code_output(self, text: str) -> bool:
+    # 添加自定义的代码输出检测规则
+    custom_indicators = ['your_pattern']
+    return any(indicator in text for indicator in custom_indicators)
+```
+
+## 📚 开发文档
+
+- [项目架构文档](docs/) - 详细的技术文档
+- [TTYD协议开发指南](docs/ttyd-protocol-dev-guide.md) - 通用的ttyd开发经验和技巧
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request！
+
+### 开发环境设置
 
 ```bash
-case $COMMAND in
-    "nodejs")
-        $GOTTY_BIN --config-file "$CONFIG_FILE" --port "$PORT" node
-        ;;
-    "docker")
-        $GOTTY_BIN --config-file "$CONFIG_FILE" --port "$PORT" docker run -it ubuntu bash
-        ;;
-esac
+# 安装依赖
+uv sync
+
+# 运行测试
+uv run python -m pytest
+
+# 启动开发服务
+./ttyd/ttyd-service.sh start
 ```
 
 ## 📝 许可证
 
 MIT License
+
+---
+
+**注意**: 本项目专注于演示TTYD的Web终端API功能，适合学习和原型开发。生产环境使用请注意安全配置。

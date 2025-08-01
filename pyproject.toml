@@ -1,10 +1,9 @@
 [project]
-name = "terminal-api-mvp"
+name = "terminal-api-for-qcli"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "gradio>=5.0.0",
     "requests>=2.25.0",
-    "websocket-client>=1.0.0",
-    "pytest>=7.0.0",
+    "websockets>=12.0"
 ]

@@ -1,54 +1,78 @@
 #!/usr/bin/env python3
 """
-测试运行脚本 - 提供不同的测试运行选项
+简单的测试运行器
+直接运行各个测试脚本
 """
 
 import subprocess
 import sys
-import argparse
+import os
+from pathlib import Path
 
-def run_command(cmd, description):
-    """运行命令并显示结果"""
-    print(f"\n🚀 {description}")
-    print("=" * 50)
+def run_test_script(script_path, description):
+    """运行测试脚本"""
+    print(f"\n{'='*50}")
+    print(f"🚀 {description}")
+    print('='*50)
     
     try:
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=False)
-        print(f"✅ {description} 完成")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ {description} 失败 (退出码: {e.returncode})")
+        # 使用 uv run 运行测试脚本
+        result = subprocess.run([
+            "uv", "run", "python", str(script_path)
+        ], cwd=Path(__file__).parent, timeout=120)
+        
+        if result.returncode == 0:
+            print(f"✅ {description} - 通过")
+            return True
+        else:
+            print(f"❌ {description} - 失败")
+            return False
+            
+    except subprocess.TimeoutError:
+        print(f"⏰ {description} - 超时")
+        return False
+    except Exception as e:
+        print(f"💥 {description} - 错误: {e}")
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description="运行测试套件")
-    parser.add_argument("--unit", action="store_true", help="只运行单元测试")
-    parser.add_argument("--integration", action="store_true", help="只运行集成测试")
-    parser.add_argument("--coverage", action="store_true", help="运行测试并生成覆盖率报告")
-    parser.add_argument("--fast", action="store_true", help="快速测试（跳过慢速测试）")
+    """主函数"""
+    print("🧪 开始运行简单测试套件")
     
-    args = parser.parse_args()
+    # 测试脚本列表
+    tests = [
+        ("tests/test_terminal_api.py", "终端API基础测试"),
+        ("tests/test_formatted_output.py", "格式化输出测试"),
+        ("tests/test_ttyd_service.py", "服务脚本测试"),
+    ]
     
-    # 基础测试命令
-    base_cmd = "uv run python -m pytest"
+    # 检查是否运行集成测试
+    if len(sys.argv) > 1 and sys.argv[1] == "--integration":
+        tests.append(("tests/test_integration.py", "集成测试（需要ttyd服务）"))
     
-    if args.unit:
-        cmd = f"{base_cmd} -m 'not integration'"
-        run_command(cmd, "单元测试")
-    elif args.integration:
-        cmd = f"{base_cmd} -m integration"
-        run_command(cmd, "集成测试")
-    elif args.coverage:
-        # 需要安装 pytest-cov: uv add pytest-cov
-        cmd = f"{base_cmd} --cov=api --cov-report=html --cov-report=term"
-        run_command(cmd, "测试覆盖率分析")
-    elif args.fast:
-        cmd = f"{base_cmd} -m 'not slow'"
-        run_command(cmd, "快速测试")
+    # 运行测试
+    passed = 0
+    total = len(tests)
+    
+    for script, description in tests:
+        if run_test_script(script, description):
+            passed += 1
+    
+    # 显示结果
+    print(f"\n{'='*50}")
+    print(f"📊 测试结果: {passed}/{total} 通过")
+    print('='*50)
+    
+    if passed == total:
+        print("🎉 所有测试通过！")
+        if "--integration" not in sys.argv:
+            print("\n💡 提示: 运行 'python run_tests.py --integration' 来测试完整功能")
+            print("   （需要先启动ttyd服务: ./ttyd/ttyd-service.sh start）")
+        return True
     else:
-        # 运行所有测试
-        cmd = f"{base_cmd}"
-        run_command(cmd, "完整测试套件")
+        print("❌ 部分测试失败")
+        return False
 
 if __name__ == "__main__":
-    main()
+    success = main()
+    sys.exit(0 if success else 1)

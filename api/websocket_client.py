@@ -149,15 +149,15 @@ class TtydWebSocketClient:
             self.state = ConnectionState.CONNECTING
             logger.info(f"连接到ttyd服务器: {self.url}")
             
-            # 关键修复：在WebSocket握手时提供HTTP基本认证头
+            # WebSocket握手时提供HTTP基本认证头
             self.websocket = await websockets.connect(
                 self.url,
                 subprotocols=['tty'],
                 additional_headers={
                     "Authorization": f"Basic {self.auth_token}"
                 },
-                ping_interval=30,
-                ping_timeout=10
+                ping_interval=None,  # 禁用客户端心跳
+                ping_timeout=None    # 禁用心跳超时
             )
             
             self.state = ConnectionState.CONNECTED

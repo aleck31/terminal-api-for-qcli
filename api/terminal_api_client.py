@@ -27,8 +27,8 @@ class TerminalState(Enum):
 class CommandResult:
     """命令执行结果"""
     command: str
-    output: str
-    markdown: str  # Markdown 格式输出
+    output: str              # 清理后的纯文本输出
+    formatted_output: str    # 格式化后的输出（用于显示）
     success: bool
     execution_time: float
     error: Optional[str] = None
@@ -48,7 +48,7 @@ class TerminalAPIClient:
             username: 认证用户名
             password: 认证密码
             use_ssl: 是否使用SSL
-            format_output: 是否格式化输出为 Markdown
+            format_output: 是否格式化输出
         """
         self.host = host
         self.port = port
@@ -270,7 +270,7 @@ class TerminalAPIClient:
             return CommandResult(
                 command=command,
                 output="",
-                markdown=f"## ❌ 命令执行失败\n**错误:** `{error_msg}`\n---",
+                formatted_output=f"## ❌ 命令执行失败\n**错误:** `{error_msg}`\n---",
                 success=False,
                 execution_time=0.0,
                 error=error_msg
@@ -331,14 +331,14 @@ class TerminalAPIClient:
                     success=success,
                     execution_time=execution_time
                 )
-                markdown = formatted.markdown
+                formatted_text = formatted.plain_text  # 使用 plain_text 字段
             else:
-                markdown = f"```\n{final_output}\n```" if final_output else "无输出"
+                formatted_text = f"```\n{final_output}\n```" if final_output else "无输出"
             
             result = CommandResult(
                 command=command,
                 output=final_output,
-                markdown=markdown,
+                formatted_output=formatted_text,  # 更清晰的字段名
                 success=success,
                 execution_time=execution_time,
                 error=error
@@ -355,7 +355,7 @@ class TerminalAPIClient:
             return CommandResult(
                 command=command,
                 output="",
-                markdown=f"## ❌ 命令执行失败\n**错误:** `{error_msg}`\n**执行时间:** {execution_time:.2f}秒\n---",
+                formatted_output=f"## ❌ 命令执行失败\n**错误:** `{error_msg}`\n**执行时间:** {execution_time:.2f}秒\n---",
                 success=False,
                 execution_time=execution_time,
                 error=error_msg

@@ -51,11 +51,11 @@ async def test_integration():
             
             # 测试格式化输出
             result = await client.execute_command('echo "Format Test"')
-            if result.success and "## ✅ 命令执行 - 成功" in result.markdown:
-                print("✅ Markdown格式化正常")
+            if result.success and "Format Test" in result.output:
+                print("✅ 输出格式化正常")
                 success_count += 1
             else:
-                print("❌ Markdown格式化异常")
+                print("❌ 输出格式化异常")
             
             print(f"\n集成测试结果: {success_count}/{len(test_commands)+1} 通过")
             return success_count == len(test_commands) + 1

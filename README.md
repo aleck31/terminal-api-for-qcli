@@ -123,8 +123,8 @@ async def example():
         
         print(f"成功: {result.success}")
         print(f"执行时间: {result.execution_time:.2f}秒")
-        print("Markdown输出:")
-        print(result.markdown)
+        print("格式化后输出:")
+        print(result.formatted_output)
 
 # 运行示例
 asyncio.run(example())

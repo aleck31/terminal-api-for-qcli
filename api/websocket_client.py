@@ -32,7 +32,7 @@ class TtydMessage:
     message_type: str = "output"
 
 class ANSICleaner:
-    """简化的ANSI清理器"""
+    """ANSI清理器 - 兼容各种终端类型"""
     
     def __init__(self):
         # 组合正则表达式 - 清理ANSI转义序列和OSC序列
@@ -45,12 +45,18 @@ class ANSICleaner:
         if not text:
             return text
         
+        original_text = text
+        
         # 移除ANSI转义序列
         text = self.ansi_pattern.sub('', text)
-        # 移除OSC序列
+        # 移除OSC序列  
         text = self.osc_pattern.sub('', text)
         # 移除其他控制字符（保留换行符、制表符）
         text = self.control_chars.sub('', text)
+        
+        # 调试：如果清理前后有差异，记录日志
+        if original_text != text:
+            logger.debug(f"ANSI清理: {repr(original_text)} -> {repr(text)}")
         
         return text.strip()
     

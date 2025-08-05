@@ -28,22 +28,21 @@ declare -A CONFIG=(
     [credential]="demo:password123"
     [permit_write]=true
     [max_clients]=10
-    [timeout]=300
-    [terminal_type]="xterm-256color"
+    [timeout]=600
+    [terminal_type]="xterm"
     [title_format]="Terminal API - {terminal}"
     [check_origin]=false
     [once]=false
     [readonly]=false
-    [ping_interval]=30
+    [ping_interval]=28800
     [reconnect]=true
     [ipv6]=false
     [ssl]=false
     [debug_level]=7
     [work_dir]="/tmp/ttyd"
-    [default_terminal]="bash"
+    [default_terminal]="qterm"
+    [qterm_command]="qterm"
     [qcli_command]="q chat"
-    [python_command]="python3"
-    [bash_command]="bash"
     [pid_dir]="pids"
     [log_dir]="logs"
     [health_check_timeout]=10
@@ -53,7 +52,7 @@ declare -A CONFIG=(
 # 加载配置文件
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
-        # 静默加载配置文件，不显示日志
+        # 加载配置文件
         while IFS='=' read -r key value; do
             # 跳过注释和空行
             [[ $key =~ ^[[:space:]]*# ]] && continue
@@ -144,8 +143,13 @@ get_terminal_command() {
     local terminal_type="$1"
     
     case "$terminal_type" in
-        "bash")
-            echo "$(get_config bash_command)"
+        "qterm")
+            local qterm_cmd="$(get_config qterm_command)"
+            if ! command -v "$(echo "$qterm_cmd" | cut -d' ' -f1)" >/dev/null 2>&1; then
+                error "qterm 未找到: $qterm_cmd"
+                return 1
+            fi
+            echo "$qterm_cmd"
             ;;
         "qcli"|"q")
             local qcli_cmd="$(get_config qcli_command)"
@@ -154,9 +158,6 @@ get_terminal_command() {
                 return 1
             fi
             echo "$qcli_cmd"
-            ;;
-        "python"|"python3")
-            echo "$(get_config python_command)"
             ;;
         *)
             echo "$terminal_type"
@@ -173,6 +174,7 @@ build_ttyd_args() {
     # 基本参数（使用短格式）
     args+=(-p "$port")
     args+=(-c "$(get_config credential)")
+    args+=(-w "$(get_config work_dir)")  # 添加工作目录参数
     
     # 可选参数（使用短格式）
     [[ "$(get_config permit_write)" == "true" ]] && args+=(-W)
@@ -385,17 +387,16 @@ TTYD Service Management Script
   help                - 显示帮助
 
 终端类型:
-  bash    - Bash Shell (默认)
+  qterm   - Q Terminal (默认)
   qcli    - Q CLI
-  python  - Python REPL
 
 示例:
-  ./ttyd-service.sh start           # 启动默认服务 (bash:7681)
-  ./ttyd-service.sh start qcli      # 启动 Q CLI (端口 7681)
-  ./ttyd-service.sh start bash 8080 # 启动 Bash (端口 8080)
-  ./ttyd-service.sh stop            # 停止默认服务
-  ./ttyd-service.sh status          # 查看默认服务状态
-  ./ttyd-service.sh stop-all        # 停止所有服务
+  ./ttyd-service.sh start            # 启动默认服务 (qterm:7681)
+  ./ttyd-service.sh start qcli       # 启动 Q CLI (端口 7681)
+  ./ttyd-service.sh start qterm 8080 # 启动 Qterm (端口 8080)
+  ./ttyd-service.sh stop             # 停止默认服务
+  ./ttyd-service.sh status           # 查看默认服务状态
+  ./ttyd-service.sh stop-all         # 停止所有服务
 
 配置文件: ttyd/conf.ini
 日志目录: logs/

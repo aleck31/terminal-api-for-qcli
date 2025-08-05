@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Utility components
+Formatter Tools
 """
 
 import re
@@ -38,29 +38,14 @@ class TerminalOutputFormatter:
         self.multiple_newlines = re.compile(r'\n{3,}')
     
     def clean_terminal_output(self, raw_output: str) -> str:
-        """清理终端输出，移除控制序列"""
+        """清理终端输出，移除控制序列 - 修复清理顺序"""
         if not raw_output:
             return ""
         
         text = raw_output
         
-        # 1. 移除各种 OSC 序列和 shell 集成信息
-        # OSC 697 序列（shell 集成信息）
-        text = re.sub(r'697;[^697\n]*(?=697|$)', '', text)
-        text = re.sub(r'697[^;\n]*', '', text)
-        
-        # 移除所有以分号开头的 shell 集成信息
-        text = re.sub(r';[A-Za-z][A-Za-z0-9]*=[^\n]*', '', text)
-        text = re.sub(r';[A-Za-z][A-Za-z0-9]*\n', '', text)
-        text = re.sub(r';[A-Za-z][A-Za-z0-9]*$', '', text)
-        
-        # OSC 0 序列（窗口标题）
-        text = re.sub(r'\x1b\]0;[^\x07]*\x07', '', text)
-        
-        # OSC 1337 序列（iTerm2 集成）
-        text = re.sub(r'1337;[^\n]*', '', text)
-        
-        # 其他 OSC 序列
+        # 1. 首先清理所有完整的 OSC 序列（优先级最高，避免被其他规则破坏）
+        # 这包括 OSC 0, 697, 1337 等所有序列
         text = self.osc_pattern.sub('', text)
         
         # 2. 移除 ANSI 转义序列
@@ -73,24 +58,11 @@ class TerminalOutputFormatter:
         text = self.control_chars.sub('', text)
         
         # 5. 清理提示符相关的残留
-        # 移除常见的提示符模式
         text = re.sub(r'ubuntu@[^:]*:[^$]*\$\s*', '', text)
-        text = re.sub(r'StartPrompt[^\n]*', '', text)
-        text = re.sub(r'EndPrompt[^\n]*', '', text)
-        text = re.sub(r'NewCmd[^\n]*', '', text)
-        text = re.sub(r'PreExec[^\n]*', '', text)
-        text = re.sub(r'OSCLock[^\n]*', '', text)
-        text = re.sub(r'OSCUnlock[^\n]*', '', text)
         
-        # 6. 清理多余的空白和特殊字符
-        text = re.sub(r'[;\s]*$', '', text, flags=re.MULTILINE)  # 移除行尾的分号和空白
-        text = re.sub(r'^[;\s]*', '', text, flags=re.MULTILINE)  # 移除行首的分号和空白
-        text = self.multiple_spaces.sub('  ', text)  # 最多保留2个空格
-        text = self.multiple_newlines.sub('\n\n', text)  # 最多保留2个换行
-        
-        # 7. 移除空行和首尾空白
-        lines = [line.strip() for line in text.split('\n') if line.strip() and not line.strip().startswith(';')]
-        text = '\n'.join(lines)
+        # 6. 清理多余的空白
+        text = self.multiple_spaces.sub(' ', text)
+        text = self.multiple_newlines.sub('\n\n', text)
         
         return text
 

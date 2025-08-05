@@ -51,7 +51,7 @@ class InteractiveTerminalDemo:
         """实时输出回调 - 流式显示"""
         if output and output.strip():
             # 清理输出，移除控制字符
-            from api.utils import clean_terminal_text
+            from api.utils.formatter import clean_terminal_text
             cleaned = clean_terminal_text(output)
             if cleaned and cleaned.strip():
                 # 实时打印输出，不换行

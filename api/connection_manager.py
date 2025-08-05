@@ -27,7 +27,7 @@ class ConnectionManager:
 
     def __init__(self, host: str = "localhost", port: int = 7681,
                  username: str = "demo", password: str = "password123",
-                 use_ssl: bool = False):
+                 use_ssl: bool = False, terminal_type: str = "bash"):
         """
         初始化连接管理器
 
@@ -37,12 +37,14 @@ class ConnectionManager:
             username: 认证用户名
             password: 认证密码
             use_ssl: 是否使用SSL
+            terminal_type: 终端类型 (bash, qcli, python)
         """
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.use_ssl = use_ssl
+        self.terminal_type = terminal_type
 
         # 连接状态
         self.state = ConnectionState.DISCONNECTED
@@ -167,7 +169,7 @@ class ConnectionManager:
             return False
 
         try:
-            return await self._client.send_command(command)
+            return await self._client.send_command(command, self.terminal_type)
         except Exception as e:
             logger.error(f"发送命令时出错: {e}")
             self._handle_error(e)

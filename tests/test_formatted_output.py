@@ -11,7 +11,7 @@ import os
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.utils import format_terminal_output, clean_terminal_text
+from api.utils.formatter import format_terminal_output, clean_terminal_text
 
 def test_output_cleaning():
     """测试输出清理功能"""

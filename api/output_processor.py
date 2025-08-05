@@ -2,16 +2,24 @@
 """
 Output Processor
 专注数据转换：统一的原始数据清理和格式化入口
-不负责命令完成检测，只处理数据转换
+支持不同终端类型：bash、qcli 等
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Union
 from dataclasses import dataclass
+from enum import Enum
 
 from .utils.formatter import clean_terminal_text
+from .utils.qcli_formatter import clean_qcli_text, process_qcli_chunk, QCLIChunk, QCLIState
 
 logger = logging.getLogger(__name__)
+
+class TerminalType(Enum):
+    """终端类型"""
+    BASH = "bash"
+    QCLI = "qcli"
+    PYTHON = "python"
 
 @dataclass
 class ProcessedOutput:
@@ -19,17 +27,21 @@ class ProcessedOutput:
     cleaned_text: str        # 清理后的纯文本
     formatted_text: str      # 格式化后的文本（用于显示）
     command_echo_removed: bool = False
+    # Q CLI 特有字段
+    qcli_chunk: Optional[QCLIChunk] = None
 
 class OutputProcessor:
-    """输出处理器 - 专注数据转换"""
+    """输出处理器 - 专注数据转换，支持多种终端类型"""
     
-    def __init__(self, enable_formatting: bool = True):
+    def __init__(self, terminal_type: TerminalType = TerminalType.BASH, enable_formatting: bool = True):
         """
         初始化输出处理器
         
         Args:
+            terminal_type: 终端类型
             enable_formatting: 是否启用格式化输出
         """
+        self.terminal_type = terminal_type
         self.enable_formatting = enable_formatting
         
         # 命令回显移除状态（每个命令独立）
@@ -48,13 +60,17 @@ class OutputProcessor:
         if not raw_output:
             return ""
         
-        # 1. ANSI 清理
-        cleaned = clean_terminal_text(raw_output)
+        # 根据终端类型选择清理方法
+        if self.terminal_type == TerminalType.QCLI:
+            cleaned = clean_qcli_text(raw_output)
+        else:
+            # 默认使用标准终端清理
+            cleaned = clean_terminal_text(raw_output)
         
         if not cleaned:
             return ""
         
-        # 2. 进一步清理（移除多余的空白等）
+        # 进一步清理（移除多余的空白等）
         cleaned = self._additional_cleanup(cleaned)
         
         return cleaned
@@ -73,6 +89,42 @@ class OutputProcessor:
         if not raw_output:
             return ""
         
+        # Q CLI 有特殊的流式处理逻辑
+        if self.terminal_type == TerminalType.QCLI:
+            return self._process_qcli_stream_output(raw_output, command)
+        
+        # 标准终端的流式处理
+        return self._process_standard_stream_output(raw_output, command)
+    
+    def process_qcli_chunk(self, raw_output: str) -> QCLIChunk:
+        """
+        处理 Q CLI 消息块 - Q CLI 专用方法
+        
+        Args:
+            raw_output: 原始输出数据
+            
+        Returns:
+            QCLIChunk: Q CLI 消息块
+        """
+        if self.terminal_type != TerminalType.QCLI:
+            raise ValueError("process_qcli_chunk 只能在 QCLI 终端类型下使用")
+        
+        return process_qcli_chunk(raw_output)
+    
+    def _process_qcli_stream_output(self, raw_output: str, command: str) -> str:
+        """处理 Q CLI 流式输出"""
+        chunk = process_qcli_chunk(raw_output)
+        
+        # 只返回有效的回复内容
+        if chunk.is_content:
+            return chunk.content
+        elif chunk.state == QCLIState.THINKING:
+            return "Thinking..."  # 可以选择是否显示思考状态
+        else:
+            return ""  # 其他状态不返回内容
+    
+    def _process_standard_stream_output(self, raw_output: str, command: str) -> str:
+        """处理标准终端流式输出"""
         # 1. 基础清理
         cleaned = self.process_raw_output(raw_output)
         

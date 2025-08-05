@@ -14,6 +14,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from api import TerminalAPIClient
+from api.command_executor import TerminalType
 
 class InteractiveTerminalDemo:
     """交互式终端演示"""
@@ -21,7 +22,6 @@ class InteractiveTerminalDemo:
     def __init__(self):
         self.client: Optional[TerminalAPIClient] = None
         self.running = True
-        self.current_output = ""
         
     async def setup_client(self):
         """设置客户端连接"""
@@ -32,11 +32,8 @@ class InteractiveTerminalDemo:
             port=7681,
             username="demo",
             password="password123",
-            format_output=False  # 使用原始输出，便于流式显示
+            format_output=True  # 启用格式化输出
         )
-        
-        # 设置实时输出回调
-        self.client.set_output_callback(self.on_output_received)
         
         success = await self.client.connect()
         if success:
@@ -46,17 +43,6 @@ class InteractiveTerminalDemo:
         else:
             print("❌ 连接失败，请检查 ttyd 服务是否启动")
             return False
-    
-    def on_output_received(self, output: str):
-        """实时输出回调 - 流式显示"""
-        if output and output.strip():
-            # 清理输出，移除控制字符
-            from api.utils.formatter import clean_terminal_text
-            cleaned = clean_terminal_text(output)
-            if cleaned and cleaned.strip():
-                # 实时打印输出，不换行
-                print(cleaned, end='', flush=True)
-                self.current_output += cleaned
     
     def show_help(self):
         """显示帮助信息"""
@@ -100,26 +86,40 @@ class InteractiveTerminalDemo:
             print("❌ 客户端未连接")
             return
         
-        # 清空当前输出缓冲
-        self.current_output = ""
-        
         print("📤 输出:")
         print("-" * 50)
         
         try:
-            # 执行命令，输出会通过回调实时显示
-            result = await self.client.execute_command(command, timeout=30.0)
+            start_time = asyncio.get_event_loop().time()
+            success = False
+            error_msg = None
+            
+            # 使用新的流式接口
+            async for chunk in self.client.execute_command_stream(command, timeout=30.0):
+                # 显示有效内容
+                if chunk.get("content") and chunk.get("content").strip():
+                    print(chunk["content"], end='', flush=True)
+                
+                # 检查完成状态
+                if chunk.get("state") == "complete":
+                    success = chunk.get("command_success", False)
+                    error_msg = chunk.get("error")
+                    execution_time = chunk.get("execution_time", 0)
+                    break
+                elif chunk.get("state") == "error":
+                    success = False
+                    error_msg = chunk.get("error", "未知错误")
+                    execution_time = asyncio.get_event_loop().time() - start_time
+                    break
             
             # 确保输出完整
             print()  # 换行
             print("-" * 50)
             
-            if result.success:
-                print(f"✅ 命令执行成功 (耗时: {result.execution_time:.3f}秒)")
+            if success:
+                print(f"✅ 命令执行成功 (耗时: {execution_time:.3f}秒)")
             else:
-                print(f"❌ 命令执行失败: {result.error}")
-                if result.output:
-                    print(f"输出: {result.output}")
+                print(f"❌ 命令执行失败: {error_msg or '未知错误'}")
             
         except Exception as e:
             print(f"\n❌ 执行出错: {e}")

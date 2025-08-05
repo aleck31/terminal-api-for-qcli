@@ -19,6 +19,7 @@ from gradio import ChatMessage
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api import TerminalAPIClient
+from api.command_executor import TerminalType
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -44,9 +45,10 @@ class TerminalChatBot:
             # 创建新的客户端实例
             client = TerminalAPIClient(
                 host="localhost",
-                port=7681,
+                port=7682,  # Q CLI ttyd 服务端口
                 username="demo",
                 password="password123",
+                terminal_type=TerminalType.QCLI,  # 使用 Q CLI 类型
                 format_output=True
             )
             
@@ -64,29 +66,7 @@ class TerminalChatBot:
             logger.info(f"为会话创建新的事件循环: {session_id}")
         
         return self.user_loops[session_id]
-    
-    def get_help_message(self) -> str:
-        """获取帮助信息"""
-        return """🖥️ **Terminal API Chat 使用指南**
 
-**交互方式说明：**
-- 直接命令：输入终端命令，如 "ls -la", "pwd", "echo hello"
-- 自然语言：描述你想做的事，如 "列出当前目录的所有文件"
-- 系统命令：输入 "help" 查看此帮助信息
-
-**输出显示说明：**
-- 📤 **标准输出**: 命令的正常输出结果
-- ⚠️ **错误输出**: 命令的错误信息
-- ✅/❌ **执行状态**: 命令执行结果统计
-
-**安全特性：**
-- 实时命令执行
-- Markdown格式化输出
-- 连接状态监控
-- 错误处理和重连
-
-输入 `help` 或 `帮助` 查看此信息。
-"""
     
     def get_connection_status(self, session_id: str) -> str:
         """获取连接状态信息"""
@@ -95,9 +75,9 @@ class TerminalChatBot:
         
         client = self.user_clients[session_id]
         if client.is_connected:
-            return f"**🔌 连接状态**: ✅ 已连接到 ttyd 服务 (localhost:7681)"
+            return f"**🔌 连接状态**: ✅ 已连接到 Q CLI ttyd 服务 (localhost:7682)"
         else:
-            return f"**🔌 连接状态**: ❌ 未连接 - 请检查 ttyd 服务是否启动"
+            return f"**🔌 连接状态**: ❌ 未连接 - 请检查 Q CLI ttyd 服务是否启动"
     
     def cleanup_session(self, session_id: str):
         """清理会话资源"""
@@ -122,12 +102,6 @@ class TerminalChatBot:
         
         # 使用 Gradio 的 session_hash 作为 session ID
         session_id = (request.session_hash if request else None) or f"sid-{int(time.time())}"
-        
-        # 检查帮助请求
-        if message.lower().strip() in ['help', '帮助', 'h', '?']:
-            help_msg = ChatMessage(role="assistant", content=self.get_help_message())
-            yield ([help_msg], self.get_connection_status(session_id))
-            return
         
         # 为这个会话获取或创建客户端
         client = self.get_or_create_client_for_session(session_id)
@@ -179,11 +153,44 @@ class TerminalChatBot:
                                 await client.connect()
                             
                             if not client.is_connected:
-                                stream_queue.put({"error": "❌ 无法连接到 ttyd 服务，请检查服务是否启动"})
+                                stream_queue.put({"error": "❌ 无法连接到 Q CLI ttyd 服务，请检查服务是否启动"})
                                 return
                             
-                            # 执行命令
-                            result = await client.execute_command(command)
+                            # 使用新的流式接口
+                            response_parts = []
+                            final_success = False
+                            final_execution_time = 0.0
+                            final_error = None
+                            
+                            async for chunk in client.execute_command_stream(command, timeout=30.0):
+                                # 收集有效内容
+                                if chunk.get("content") and chunk.get("is_content"):
+                                    response_parts.append(chunk["content"])
+                                
+                                # 检查完成状态
+                                if chunk.get("state") == "complete":
+                                    final_success = chunk.get("command_success", False)
+                                    final_execution_time = chunk.get("execution_time", 0.0)
+                                    final_error = chunk.get("error")
+                                    break
+                                elif chunk.get("state") == "error":
+                                    final_success = False
+                                    final_error = chunk.get("error", "未知错误")
+                                    final_execution_time = chunk.get("execution_time", 0.0)
+                                    break
+                            
+                            # 组装最终结果
+                            final_output = " ".join(response_parts) if response_parts else ""
+                            
+                            # 创建兼容的结果对象
+                            class CompatResult:
+                                def __init__(self, output, success, execution_time, error):
+                                    self.output = output
+                                    self.success = success
+                                    self.execution_time = execution_time
+                                    self.error = error
+                            
+                            result = CompatResult(final_output, final_success, final_execution_time, final_error)
                             
                             # 发送结果
                             stream_queue.put({
@@ -248,7 +255,7 @@ class TerminalChatBot:
                             
                             # 创建内容消息 - 只显示命令输出，不包含状态信息
                             if result.output and result.output.strip():
-                                # 使用原始输出，不使用 markdown（避免重复格式化）
+                                # 使用原始输出，不使用 formatted_output（避免重复格式化）
                                 content_msg = ChatMessage(
                                     role="assistant",
                                     content=f"```bash\n{result.output.strip()}\n```"
@@ -323,31 +330,47 @@ def create_demo():
     }
     """
     
-    with gr.Blocks(title="Terminal API Chat", css=css) as demo:
+    with gr.Blocks(title="Q CLI Chat Interface", css=css) as demo:
         gr.Markdown("""
-            # 🖥️ Terminal API Chat
-            **通过聊天界面与终端进行交互，支持实时命令执行和Markdown格式化输出**
+            # 🤖 Q CLI Chat Interface
+            **通过聊天界面与 Amazon Q CLI 进行交互，获得 AWS 专业建议和技术支持**
             """)
         
         with gr.Row():
-            with gr.Column(scale=2):
-                gr.Markdown("""
-                    本演示支持：
-                    - 🖥️ **终端命令执行** (bash, shell 命令)
-                    - 📝 **清晰格式化输出** (代码块显示)
-                    - 🔄 **实时流式输出** (即时反馈)
-                    - 🔌 **连接状态监控** (自动重连)
-                    """)
-            
-            with gr.Column(scale=1):
-                connection_status = gr.Markdown(
-                    label="🔌 连接状态",
-                    show_label=True,
-                    container=True,
-                    value="**🔌 连接状态**: 未初始化",
-                    render=False
-                )
-        
+            with gr.Column(scale=4):
+                # WebSocket 连接状态控制面板
+                with gr.Group():
+                    gr.Markdown("### 🔌 Q CLI 连接控制")
+                    
+                    with gr.Row():
+                        connection_status_btn = gr.Button(
+                            value="🔴 未初始化",
+                            variant="secondary",
+                            size="sm",
+                            interactive=False,
+                            elem_classes=["connection-status"]
+                        )
+                    
+                    # 添加连接状态文本框
+                    connection_status = gr.Textbox(
+                        label="连接状态",
+                        value="**🔌 连接状态**: 未初始化",
+                        interactive=False,
+                        max_lines=1
+                    )
+                    
+                    with gr.Row():
+                        connect_btn = gr.Button("🔗 连接", variant="primary", size="sm")
+                        disconnect_btn = gr.Button("🔌 断开", variant="secondary", size="sm")
+                        refresh_btn = gr.Button("🔄 刷新", variant="secondary", size="sm")
+                    
+                    status_message = gr.Textbox(
+                        label="状态消息",
+                        value="等待操作...",
+                        interactive=False,
+                        max_lines=2
+                    )
+
         with gr.Row():
             with gr.Column(scale=2):
                 # 定义Chatbot组件
@@ -361,7 +384,7 @@ def create_demo():
                 )
                 
                 textbox = gr.Textbox(
-                    placeholder="输入终端命令... (例如: ls -la, pwd, echo hello)",
+                    placeholder="询问 AWS 相关问题... (例如: 什么是 Lambda? 如何创建 S3 存储桶?)",
                     submit_btn=True,
                     stop_btn=True,
                     render=False
@@ -375,20 +398,48 @@ def create_demo():
                     textbox=textbox,
                     additional_outputs=[connection_status],
                     examples=[
-                        "help",
-                        "pwd",
-                        "ls -la",
-                        "echo 'Hello Terminal API'",
-                        "whoami",
-                        "date",
-                        "ps aux | head -5",
-                        "df -h"
+                        "Hello",
+                        "What is AWS Lambda?",
+                        "How to create an S3 bucket?",
+                        "Explain EC2 instance types",
+                        "What is CloudFormation?",
+                        "AWS best practices",
+                        "How to use AWS CLI?",
+                        "What is VPC?"
                     ],
                     theme='soft'
                 )
             
             with gr.Column(scale=1):
-                connection_status.render()
+                gr.Markdown("""
+                ### 💡 使用提示
+
+                **交互方式：**
+                - 直接提问：询问 AWS 相关问题，如 "什么是 Lambda？"
+                - 技术咨询：请求帮助，如 "如何创建 S3 存储桶？"
+                - 最佳实践：询问建议，如 "AWS 安全最佳实践"
+
+                **输出显示：**
+                - 🤔 **思考状态**: Q CLI 正在处理您的问题
+                - 💬 **实时回复**: Q CLI 的流式回答
+                - ✅/❌ **执行状态**: 问答完成状态
+
+                **连接状态：**
+                - 🟢 已连接 - 可以开始对话
+                - 🔴 未连接 - 需要点击连接按钮
+                
+                **连接问题：**
+                如果连接断开，请：
+                1. 点击"刷新"查看状态
+                2. 点击"连接"重新连接
+                3. 检查 Q CLI ttyd 服务是否运行
+                
+                **示例问题：**
+                - "什么是 AWS Lambda？"
+                - "如何设置 VPC？"
+                - "S3 的存储类别有哪些？"
+                - "EC2 实例类型如何选择？"
+                """)
         
         # 页面加载时初始化状态
         def initialize_status(request: gr.Request):

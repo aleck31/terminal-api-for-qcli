@@ -7,14 +7,14 @@ Terminal API Client
 
 import asyncio
 import logging
-from typing import Optional, Callable
+import json
+from typing import Optional, Callable, Dict, Any, AsyncIterator
 from enum import Enum
 from dataclasses import dataclass
 
 from .connection_manager import ConnectionManager
 from .command_executor import CommandExecutor, CommandResult, TerminalType
 from .output_processor import OutputProcessor
-from .qcli_state_detector import QCLIStateDetector, QCLIState, QCLIStateChange
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,11 @@ class TerminalState(Enum):
 class EnhancedCommandResult:
     """增强的命令执行结果"""
     command: str
-    output: str              # 清理后的输出
-    formatted_output: str    # 格式化后的输出
+    output: str                     # 清理后的输出
+    formatted_output: Dict[str, Any]  # JSON 格式的格式化输出
     success: bool
     execution_time: float
-    exit_code: int           # 命令退出码 (0=成功, 非0=失败)
+    exit_code: int                  # 命令退出码 (0=成功, 非0=失败)
     error: Optional[str] = None
 
 class TerminalAPIClient:
@@ -64,7 +64,7 @@ class TerminalAPIClient:
         # 初始化组件
         self._connection_manager = ConnectionManager(
             host=host, port=port, username=username, password=password,
-            use_ssl=use_ssl
+            use_ssl=use_ssl, terminal_type=terminal_type.value
         )
         
         self._command_executor = CommandExecutor(
@@ -72,7 +72,12 @@ class TerminalAPIClient:
             terminal_type=terminal_type
         )
         
+        # 根据终端类型创建对应的 OutputProcessor
+        from .output_processor import TerminalType as ProcessorTerminalType
+        processor_type = ProcessorTerminalType.QCLI if terminal_type == TerminalType.QCLI else ProcessorTerminalType.BASH
+        
         self._output_processor = OutputProcessor(
+            terminal_type=processor_type,
             enable_formatting=format_output
         )
         
@@ -85,10 +90,6 @@ class TerminalAPIClient:
         # 流式输出回调（向后兼容）
         self.output_callback: Optional[Callable[[str], None]] = None
         self.error_callback: Optional[Callable[[Exception], None]] = None
-        
-        # Q CLI 相关（特殊处理）
-        self.qcli_detector: Optional[QCLIStateDetector] = None
-        self.qcli_state_callback: Optional[Callable[[QCLIState, str], None]] = None
         
         # 设置错误处理器
         self._connection_manager.set_error_handler(self._handle_error)
@@ -141,11 +142,8 @@ class TerminalAPIClient:
                 self._set_state(TerminalState.IDLE)
                 logger.info("终端连接成功")
                 
-                # 根据终端类型进行初始化
-                if self.terminal_type == TerminalType.QCLI:
-                    await self._initialize_qcli()
-                else:
-                    await self._initialize_generic_terminal()
+                # 终端初始化
+                await self._initialize_terminal()
                 
                 return True
             else:
@@ -174,49 +172,113 @@ class TerminalAPIClient:
         except Exception as e:
             logger.error(f"断开连接时出错: {e}")
     
-    async def execute_command(self, command: str, timeout: float = 30.0) -> EnhancedCommandResult:
+    async def execute_command_stream(self, command: str, timeout: float = 30.0) -> AsyncIterator[Dict[str, Any]]:
         """
-        执行命令并返回增强的结果
+        执行命令并返回流式输出（异步迭代器）
         
         Args:
             command: 要执行的命令
             timeout: 超时时间（秒）
             
-        Returns:
-            EnhancedCommandResult: 增强的命令执行结果
+        Yields:
+            Dict: 每个流式输出块，包含 content, state, metadata 等信息
         """
         # 设置状态
         self._set_state(TerminalState.BUSY)
         
         try:
-            # 设置流式输出回调
-            if self.output_callback:
-                self._command_executor.set_stream_callback(self.output_callback)
+            # 创建队列来收集流式输出
+            output_queue = asyncio.Queue()
+            command_complete = asyncio.Event()
             
-            # 使用命令执行器执行命令（返回原始结果）
-            raw_result = await self._command_executor.execute_command(command, timeout)
+            def stream_handler(raw_chunk: str):
+                """处理流式输出块"""
+                try:
+                    # 处理输出块
+                    processed_chunk = self._output_processor.process_stream_output(
+                        raw_output=raw_chunk,
+                        command=command
+                    )
+                    
+                    # 生成格式化的流式块
+                    if self.terminal_type == TerminalType.QCLI:
+                        qcli_chunk = self._output_processor.process_qcli_chunk(raw_chunk)
+                        
+                        stream_chunk = {
+                            "content": processed_chunk,
+                            "state": qcli_chunk.state.value,
+                            "metadata": qcli_chunk.metadata or {},
+                            "is_content": qcli_chunk.is_content,
+                            "raw_length": len(raw_chunk)
+                        }
+                    else:
+                        stream_chunk = {
+                            "content": processed_chunk,
+                            "terminal_type": self.terminal_type.value,
+                            "raw_length": len(raw_chunk)
+                        }
+                    
+                    # 放入队列
+                    output_queue.put_nowait(stream_chunk)
+                    
+                except Exception as e:
+                    logger.error(f"处理流式输出时出错: {e}")
             
-            # 处理输出：基础清理
-            cleaned_output = self._output_processor.process_raw_output(raw_result.raw_output)
+            # 设置流式回调
+            self._command_executor.set_stream_callback(stream_handler)
             
-            # 处理输出：移除命令回显
-            formatted_output = cleaned_output
-            if raw_result.command and raw_result.command in cleaned_output:
-                formatted_output = cleaned_output.replace(raw_result.command, "", 1).strip()
+            # 启动命令执行任务
+            async def execute_task():
+                try:
+                    result = await self._command_executor.execute_command(command, timeout)
+                    # 命令完成，发送完成信号
+                    output_queue.put_nowait({"_command_complete": True, "result": result})
+                except Exception as e:
+                    output_queue.put_nowait({"_command_error": True, "error": str(e)})
+                finally:
+                    command_complete.set()
             
-            # 创建增强的结果
-            return EnhancedCommandResult(
-                command=raw_result.command,
-                output=cleaned_output,
-                formatted_output=formatted_output,
-                success=raw_result.success,
-                execution_time=raw_result.execution_time,
-                exit_code=0 if raw_result.success else 1,  # 基于 success 推导
-                error=raw_result.error
-            )
+            # 启动执行任务
+            execute_task_handle = asyncio.create_task(execute_task())
             
+            # 流式返回输出
+            while True:
+                try:
+                    # 等待输出或超时
+                    chunk = await asyncio.wait_for(output_queue.get(), timeout=1.0)
+                    
+                    # 检查是否是控制消息
+                    if "_command_complete" in chunk:
+                        # 命令完成，发送最终状态
+                        final_result = chunk["result"]
+                        yield {
+                            "content": "",
+                            "state": "complete",
+                            "command_success": final_result.success,
+                            "execution_time": final_result.execution_time,
+                            "error": final_result.error
+                        }
+                        break
+                    elif "_command_error" in chunk:
+                        # 命令出错
+                        yield {
+                            "content": "",
+                            "state": "error",
+                            "error": chunk["error"]
+                        }
+                        break
+                    else:
+                        # 正常的流式输出块
+                        yield chunk
+                        
+                except asyncio.TimeoutError:
+                    # 检查命令是否已完成
+                    if command_complete.is_set():
+                        break
+                    # 继续等待
+                    continue
+                    
         finally:
-            # 恢复状态
             self._set_state(TerminalState.IDLE)
     
     async def send_input(self, data: str) -> bool:
@@ -231,61 +293,20 @@ class TerminalAPIClient:
         """
         return await self._connection_manager.send_input(data)
     
-    async def _initialize_qcli(self):
-        """初始化 Q CLI"""
-        logger.info("🔍 检测 Q CLI 状态...")
+    async def _initialize_terminal(self):
+        """初始化终端 - 统一方法"""
+        if self.terminal_type == TerminalType.QCLI:
+            logger.info("⏳ Q CLI 连接就绪，可以发送消息")
+        else:
+            logger.info("⏳ 终端连接就绪，可以发送命令")
         
-        # 检查是否是持久化会话（已经初始化完成）
-        if await self._is_qcli_ready():
-            logger.info("✅ 检测到 Q CLI 已就绪，跳过初始化等待")
-            return
-        
-        # 如果不是持久化会话，需要等待初始化
-        logger.info("⏳ 等待 Q CLI 加载 MCP 服务器...")
-        
-        # 分段等待，提供进度反馈
-        total_wait = 30
-        step = 5
-        for i in range(0, total_wait, step):
-            await asyncio.sleep(step)
-            
-            # 每次等待后检查是否已经就绪
-            if await self._is_qcli_ready():
-                logger.info(f"✅ Q CLI 提前就绪！耗时: {i + step}秒")
-                return
-                
-            progress = ((i + step) / total_wait) * 100
-            logger.info(f"📊 Q CLI 初始化进度: {progress:.0f}% ({i + step}/{total_wait}秒)")
+        # 简单等待，让初始消息处理完成
+        await asyncio.sleep(1)
         
         # 检查连接是否仍然活跃
         if not self.is_connected:
-            raise ConnectionError("Q CLI 连接在初始化过程中断开")
-    
-    async def _initialize_generic_terminal(self):
-        """初始化通用终端"""
-        # 通用终端通常很快就绪
-        await asyncio.sleep(2)
-        
-        # 检查连接是否活跃
-        if not self.is_connected:
-            raise ConnectionError("终端连接在初始化过程中断开")
-    
-    async def _is_qcli_ready(self) -> bool:
-        """检测 Q CLI 是否已经就绪"""
-        try:
-            # 发送一个简单的测试命令
-            result = await self._command_executor.execute_command("help", timeout=5.0)
-            
-            # 如果命令成功执行且输出包含帮助信息，说明 Q CLI 已就绪
-            if result.success and result.raw_output:
-                cleaned_output = self._output_processor.process_raw_output(result.raw_output)
-                if any(keyword in cleaned_output.lower() for keyword in ['help', 'command', 'usage']):
-                    return True
-            
-            return False
-        except Exception as e:
-            logger.debug(f"Q CLI 就绪检测失败: {e}")
-            return False
+            terminal_name = "Q CLI" if self.terminal_type == TerminalType.QCLI else "终端"
+            raise ConnectionError(f"{terminal_name}连接在初始化过程中断开")
     
     # 异步上下文管理器支持
     async def __aenter__(self):

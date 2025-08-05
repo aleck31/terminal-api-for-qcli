@@ -29,9 +29,8 @@ class TerminalType(Enum):
 
 @dataclass
 class CommandResult:
-    """命令执行结果"""
+    """命令执行结果 - 流式版本"""
     command: str
-    raw_output: str          # 原始输出（未清理）
     success: bool
     execution_time: float
     error: Optional[str] = None
@@ -41,7 +40,6 @@ class CommandResult:
         """创建错误结果"""
         return cls(
             command=command,
-            raw_output="",
             success=False,
             execution_time=execution_time,
             error=error_msg
@@ -55,16 +53,12 @@ class CommandExecution:
         self.complete_event = asyncio.Event()
         self.timeout_occurred = False
         
-        # 原始输出收集
-        self.raw_output_parts = []
+        # 保存最后一个消息块（用于命令完成检测）
+        self.last_chunk = ""
         
     @property
     def execution_time(self) -> float:
         return time.time() - self.start_time
-    
-    @property
-    def raw_output(self) -> str:
-        return ''.join(self.raw_output_parts)
 
 class CommandExecutor:
     """命令执行器 - 专注命令生命周期管理"""
@@ -100,19 +94,19 @@ class CommandExecutor:
         self.stream_callback = callback
     
     def _handle_raw_message(self, raw_output: str):
-        """处理原始消息 - 只做命令完成检测和数据收集"""
+        """处理原始消息 - 只做命令完成检测和流式输出"""
         if not self.current_execution or not raw_output:
             return
         
         try:
-            # 收集原始输出用于最终结果
-            self.current_execution.raw_output_parts.append(raw_output)
+            # 保存最后一个消息块用于命令完成检测
+            self.current_execution.last_chunk = raw_output
             
-            # 检测命令完成（使用原始数据）
+            # 检测命令完成（使用当前消息块）
             if self._is_command_complete(raw_output):
                 self.current_execution.complete_event.set()
             
-            # 如果有输出处理器，处理数据并调用回调
+            # 如果有输出处理器，处理数据并调用流式回调
             if self.output_processor:
                 processed_output = self.output_processor.process_stream_output(
                     raw_output=raw_output,
@@ -140,14 +134,27 @@ class CommandExecutor:
             return self._is_generic_command_complete(raw_output)
     
     def _is_qcli_command_complete(self, raw_output: str) -> bool:
-        """Q CLI 命令完成检测"""
+        """Q CLI 命令完成检测 - 基于实际日志分析"""
         if not self.current_execution:
             return False
         
-        # Q CLI 的完成标志：出现单独的 ">" 提示符
-        if '>' in raw_output and self.current_execution.execution_time > 2.0:
-            # 简单检测：如果输出包含 ">" 且执行时间超过2秒
-            logger.debug("检测到 Q CLI 命令完成")
+        # Q CLI 的真正完成标志：新的提示符出现
+        # 从日志分析得出：\x1b[35m> \x1b(B\x1b[m 是回复完成后的新提示符
+        completion_indicators = [
+            '\x1b[35m> \x1b(B\x1b[m',  # 新提示符（主要标志）
+            '\x1b[35m>\x1b(B\x1b[m',   # 可能的变体
+        ]
+        
+        for indicator in completion_indicators:
+            if indicator in raw_output:
+                logger.debug("检测到 Q CLI 命令完成：新提示符出现")
+                return True
+        
+        # 备用检测：如果执行时间过长且没有新消息，也认为完成
+        if (self.current_execution.execution_time > 60.0 and 
+            '> ' in raw_output and 
+            'Thinking...' not in raw_output):
+            logger.debug("检测到 Q CLI 命令完成：超时且无思考状态")
             return True
         
         # 超时保护
@@ -227,7 +234,6 @@ class CommandExecutor:
         
         return CommandResult(
             command=self.current_execution.command,
-            raw_output=self.current_execution.raw_output,
             success=success,
             execution_time=self.current_execution.execution_time,
             error=error

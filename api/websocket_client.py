@@ -238,21 +238,27 @@ class TtydWebSocketClient:
         self.state = ConnectionState.DISCONNECTED
         logger.info("ttyd连接已断开")
 
-    async def send_command(self, command: str) -> bool:
+    async def send_command(self, command: str, terminal_type: str = "bash") -> bool:
         """发送命令到终端"""
         if not self.is_connected:
             logger.error("未连接到ttyd服务器")
             return False
 
         try:
-            # 确保命令以换行符结尾
-            if not command.endswith('\n'):
-                command += '\n'
+            # 根据终端类型选择合适的行结束符
+            if terminal_type.lower() == "qcli":
+                # Q CLI 需要 \r 结尾
+                if not command.endswith('\r'):
+                    command += '\r'
+            else:
+                # 其他终端使用 \n 结尾
+                if not command.endswith('\n'):
+                    command += '\n'
 
             # ttyd协议：INPUT命令 = '0' + 数据
             message = '0' + command
             await self.websocket.send(message)
-            logger.debug(f"发送命令: {repr(command.strip())}")
+            logger.debug(f"发送命令 ({terminal_type}): {repr(command.strip())}")
             return True
 
         except Exception as e:

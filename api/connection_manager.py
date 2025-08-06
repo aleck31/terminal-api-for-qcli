@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Connection Manager
-负责管理 WebSocket 连接的生命周期，兼容不同版本的 websockets 库
+负责管理 WebSocket 连接的生命周期，包括初始化消息预消费
 """
 
 import asyncio
@@ -18,16 +18,18 @@ class ConnectionState(Enum):
     """连接状态"""
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
+    INITIALIZING = "initializing"
     CONNECTED = "connected"
     ERROR = "error"
 
 
 class ConnectionManager:
-    """连接管理器 - 负责 WebSocket 连接的生命周期"""
+    """连接管理器 - 负责 WebSocket 连接的生命周期和初始化消息预消费"""
 
     def __init__(self, host: str = "localhost", port: int = 7681,
                  username: str = "demo", password: str = "password123",
-                 use_ssl: bool = False, terminal_type: str = "bash"):
+                 use_ssl: bool = False, terminal_type: str = "bash",
+                 silence_time: float = 2.0, max_init_time: float = 15.0):
         """
         初始化连接管理器
 
@@ -38,6 +40,8 @@ class ConnectionManager:
             password: 认证密码
             use_ssl: 是否使用SSL
             terminal_type: 终端类型 (bash, qcli, python)
+            silence_time: 静默时间（秒）- 无新消息时认为初始化结束
+            max_init_time: 最大初始化时间（秒）
         """
         self.host = host
         self.port = port
@@ -45,6 +49,8 @@ class ConnectionManager:
         self.password = password
         self.use_ssl = use_ssl
         self.terminal_type = terminal_type
+        self.silence_time = silence_time
+        self.max_init_time = max_init_time
 
         # 连接状态
         self.state = ConnectionState.DISCONNECTED
@@ -57,13 +63,12 @@ class ConnectionManager:
         )
 
         # 回调函数
-        self._message_handler: Optional[Callable[[str], None]] = None
+        self._user_message_handler: Optional[Callable[[str], None]] = None
         self._error_handler: Optional[Callable[[Exception], None]] = None
 
     def set_message_handler(self, handler: Callable[[str], None]):
-        """设置消息处理器"""
-        self._message_handler = handler
-        self._client.set_message_handler(handler)
+        """设置用户消息处理器"""
+        self._user_message_handler = handler
 
     def set_error_handler(self, handler: Callable[[Exception], None]):
         """设置错误处理器"""
@@ -88,14 +93,51 @@ class ConnectionManager:
             return False
 
         try:
-            return self._client.is_connected
+            return self._client.is_connected and self.state == ConnectionState.CONNECTED
         except Exception as e:
             logger.debug(f"检查连接状态时出错: {e}")
             return False
 
+    async def _drain_initialization_messages(self):
+        """消费初始化消息直到流结束"""
+        messages = []
+        
+        # 设置临时处理器收集消息
+        def collector(msg):
+            messages.append(msg)
+        
+        self._client.set_message_handler(collector)
+        
+        logger.info("开始消费初始化消息...")
+        start_time = asyncio.get_event_loop().time()
+        
+        # 等待消息流结束
+        last_count = 0
+        
+        while True:
+            await asyncio.sleep(self.silence_time)
+            
+            current_time = asyncio.get_event_loop().time()
+            
+            # 检查是否有新消息
+            if len(messages) == last_count:
+                # 没有新消息，流结束
+                logger.info(f"检测到 {self.silence_time}s 无新消息，初始化流结束")
+                break
+            
+            # 检查超时
+            if current_time - start_time > self.max_init_time:
+                logger.warning(f"初始化超时 ({self.max_init_time}s)，强制结束")
+                break
+            
+            last_count = len(messages)
+        
+        total_time = asyncio.get_event_loop().time() - start_time
+        logger.info(f"初始化完成: 丢弃 {len(messages)} 条消息，耗时 {total_time:.1f}s")
+
     async def connect(self) -> bool:
         """
-        建立连接
+        建立连接并处理初始化
 
         Returns:
             bool: 连接是否成功
@@ -105,15 +147,26 @@ class ConnectionManager:
         try:
             self.state = ConnectionState.CONNECTING
 
+            # 1. 建立 WebSocket 连接
             success = await self._client.connect()
-            if success:
-                self.state = ConnectionState.CONNECTED
-                logger.info("连接建立成功")
-                return True
-            else:
+            if not success:
                 self.state = ConnectionState.ERROR
-                logger.error("连接建立失败")
+                logger.error("WebSocket 连接建立失败")
                 return False
+
+            logger.info("WebSocket 连接成功")
+            
+            # 2. 消费初始化消息直到流结束
+            self.state = ConnectionState.INITIALIZING
+            await self._drain_initialization_messages()
+
+            # 3. 切换到用户消息处理
+            if self._user_message_handler:
+                self._client.set_message_handler(self._user_message_handler)
+            
+            self.state = ConnectionState.CONNECTED
+            logger.info("连接完全建立，可以开始用户交互")
+            return True
 
         except Exception as e:
             logger.error(f"连接时出错: {e}")
@@ -209,5 +262,6 @@ class ConnectionManager:
             'port': self.port,
             'use_ssl': self.use_ssl,
             'state': self.state.value,
-            'is_connected': self.is_connected
+            'is_connected': self.is_connected,
+            'terminal_type': self.terminal_type
         }

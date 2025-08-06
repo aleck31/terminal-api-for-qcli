@@ -25,6 +25,14 @@ from api.command_executor import TerminalType
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class CompatResult:
+    """兼容的结果对象"""
+    def __init__(self, output, success, execution_time, error):
+        self.output = output
+        self.success = success
+        self.execution_time = execution_time
+        self.error = error
+
 class TerminalChatBot:
     """终端聊天机器人"""
     
@@ -126,7 +134,7 @@ class TerminalChatBot:
             content=f"正在执行命令: `{command}`",
             metadata={
                 "title": "🔄 执行状态",
-                "status": "pending"
+                "status": "pending"  # 只能是 'pending' 或 'done'
             }
         )
         yield ([stat_msg], self.get_connection_status(session_id))
@@ -157,15 +165,24 @@ class TerminalChatBot:
                                 return
                             
                             # 使用新的流式接口
-                            response_parts = []
                             final_success = False
                             final_execution_time = 0.0
                             final_error = None
                             
                             async for chunk in client.execute_command_stream(command, timeout=30.0):
-                                # 收集有效内容
+                                # 实时发送流式内容
                                 if chunk.get("content") and chunk.get("is_content"):
-                                    response_parts.append(chunk["content"])
+                                    stream_queue.put({
+                                        "stream_content": chunk["content"],
+                                        "state": chunk.get("state", "responding")
+                                    })
+                                
+                                # 发送状态更新
+                                elif chunk.get("state") == "thinking":
+                                    stream_queue.put({
+                                        "status_update": "thinking",
+                                        "state": "thinking"
+                                    })
                                 
                                 # 检查完成状态
                                 if chunk.get("state") == "complete":
@@ -179,24 +196,11 @@ class TerminalChatBot:
                                     final_execution_time = chunk.get("execution_time", 0.0)
                                     break
                             
-                            # 组装最终结果
-                            final_output = " ".join(response_parts) if response_parts else ""
-                            
-                            # 创建兼容的结果对象
-                            class CompatResult:
-                                def __init__(self, output, success, execution_time, error):
-                                    self.output = output
-                                    self.success = success
-                                    self.execution_time = execution_time
-                                    self.error = error
-                            
-                            result = CompatResult(final_output, final_success, final_execution_time, final_error)
-                            
-                            # 发送结果
+                            # 发送最终结果
                             stream_queue.put({
-                                "result": result,
-                                "success": result.success,
-                                "execution_time": result.execution_time
+                                "result": CompatResult("", final_success, final_execution_time, final_error),
+                                "success": final_success,
+                                "execution_time": final_execution_time
                             })
                             
                         except Exception as e:
@@ -221,10 +225,13 @@ class TerminalChatBot:
             thread.start()
             
             # 实时从队列中获取并输出数据
+            response_content = ""  # 累积响应内容用于显示
+            content_msg = None     # 内容消息对象
+            
             while True:
                 try:
                     # 等待数据，设置超时避免无限等待
-                    data = stream_queue.get(timeout=60)
+                    data = stream_queue.get(timeout=120)
                     
                     if data is None:
                         # 收到结束信号
@@ -243,8 +250,33 @@ class TerminalChatBot:
                         yield ([stat_msg, error_msg], self.get_connection_status(session_id))
                         break
                     
-                    # 处理成功结果
-                    if "result" in data:
+                    # 处理流式内容
+                    if "stream_content" in data:
+                        content = data["stream_content"]
+                        response_content += content
+                        
+                        # 创建或更新内容消息
+                        if content_msg is None:
+                            content_msg = ChatMessage(
+                                role="assistant",
+                                content=response_content,
+                                metadata={"title": "💬 Q CLI 回复"}
+                            )
+                        else:
+                            content_msg.content = response_content
+                        
+                        # 实时输出流式内容
+                        yield ([stat_msg, content_msg], self.get_connection_status(session_id))
+                    
+                    # 处理状态更新
+                    elif "status_update" in data:
+                        if data["status_update"] == "thinking":
+                            stat_msg.content = f"Q CLI 正在思考: `{command}`"
+                            stat_msg.metadata = {"title": "🤔 思考中", "status": "pending"}  # 使用 pending
+                            yield ([stat_msg], self.get_connection_status(session_id))
+                    
+                    # 处理最终结果
+                    elif "result" in data:
                         result = data["result"]
                         duration = data["execution_time"]
                         
@@ -253,14 +285,8 @@ class TerminalChatBot:
                             stat_msg.content = f"命令执行完成: `{command}` (耗时: {duration:.2f}秒)"
                             stat_msg.metadata = {"title": "✅ 执行成功", "status": "done"}
                             
-                            # 创建内容消息 - 只显示命令输出，不包含状态信息
-                            if result.output and result.output.strip():
-                                # 使用原始输出，不使用 formatted_output（避免重复格式化）
-                                content_msg = ChatMessage(
-                                    role="assistant",
-                                    content=f"```bash\n{result.output.strip()}\n```"
-                                )
-                            else:
+                            # 如果有内容消息，保持显示；否则显示无内容
+                            if content_msg is None:
                                 content_msg = ChatMessage(
                                     role="assistant",
                                     content="命令执行完成，无输出内容"
@@ -272,8 +298,6 @@ class TerminalChatBot:
                             stat_msg.metadata = {"title": "❌ 执行失败", "status": "done"}
                             
                             error_content = f"**错误信息:** {result.error}\n\n**执行时间:** {duration:.2f}秒"
-                            if result.output:
-                                error_content += f"\n\n**输出内容:**\n```\n{result.output}\n```"
                             
                             error_msg = ChatMessage(
                                 role="assistant",

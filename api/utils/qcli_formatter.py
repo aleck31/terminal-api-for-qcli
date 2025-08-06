@@ -44,7 +44,8 @@ class QcliOutputFormatter:
         self.thinking_pattern = re.compile(r'[⠙⠹⠸⠼⠴⠦⠧⠇⠏⠋]\s*Thinking\.\.\.')
         self.token_usage_pattern = re.compile(r'█\s*(Tools|Q responses|Your prompts):')
         self.pro_tips_pattern = re.compile(r'💡\s*Pro Tips:')
-        self.response_start_pattern = re.compile(r'\x1b\[32m>\s*\x1b\[39m')  # 修复：使用实际的转义字符
+        # 使用更宽松的模式匹配实际的回复开始格式
+        self.response_start_pattern = re.compile(r'\x1b\[32m[\r\n]*>\s*\x1b\[39m')
         
         # 轻量级状态跟踪（仅用于状态检测）
         self.last_state = QCLIState.INITIALIZING

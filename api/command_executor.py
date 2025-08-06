@@ -138,11 +138,12 @@ class CommandExecutor:
         if not self.current_execution:
             return False
         
-        # Q CLI 的真正完成标志：新的提示符出现
-        # 从日志分析得出：\x1b[35m> \x1b(B\x1b[m 是回复完成后的新提示符
+        # Q CLI 完成标志：新提示符出现
         completion_indicators = [
-            '\x1b[35m> \x1b(B\x1b[m',  # 新提示符（主要标志）
-            '\x1b[35m>\x1b(B\x1b[m',   # 可能的变体
+            '\x1b[31m!\x1b[35m> \x1b(B\x1b[m',  # 新提示符（!>）
+            '\x1b[31m!\x1b[35m>\x1b(B\x1b[m',   # 可能的变体
+            '\x1b[35m> \x1b(B\x1b[m',   # 新提示符（>）
+            '\x1b[35m>\x1b(B\x1b[m',    # 可能的变体
         ]
         
         for indicator in completion_indicators:
@@ -151,10 +152,9 @@ class CommandExecutor:
                 return True
         
         # 备用检测：如果执行时间过长且没有新消息，也认为完成
-        if (self.current_execution.execution_time > 60.0 and 
-            '> ' in raw_output and 
-            'Thinking...' not in raw_output):
-            logger.debug("检测到 Q CLI 命令完成：超时且无思考状态")
+        if (self.current_execution.execution_time > 120.0 and 
+            '!>' in raw_output):
+            logger.debug("检测到 Q CLI 命令完成：超时且有提示符")
             return True
         
         # 超时保护

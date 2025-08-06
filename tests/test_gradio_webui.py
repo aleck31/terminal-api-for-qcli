@@ -8,7 +8,7 @@ import os
 import asyncio
 
 # 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_import():
     """测试导入是否正常"""
@@ -76,10 +76,12 @@ async def test_stream_interface():
             async for chunk in client.execute_command_stream("Hello", timeout=15.0):
                 chunk_count += 1
                 print(f"   收到块 #{chunk_count}: state={chunk.get('state')}, is_content={chunk.get('is_content')}, content_len={len(chunk.get('content', ''))}")
+                if chunk.get('is_content'):
+                    print(chunk.get('content', ''))
                 if chunk.get("state") == "complete":
                     print("✅ 流式接口测试成功")
                     break
-                elif chunk_count > 50:  # 防止无限循环
+                elif chunk_count > 300:  # 防止无限循环
                     print("⚠️  达到最大块数限制，停止测试")
                     break
             

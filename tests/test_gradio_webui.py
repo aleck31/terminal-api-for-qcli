@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-测试 gradio_chat.py 的更新是否正确
+测试 gradio_chat.py 是否工作正确
 """
 
 import sys
@@ -73,7 +73,7 @@ async def test_stream_interface():
             # 测试流式接口
             print("🧪 测试流式接口...")
             chunk_count = 0
-            async for chunk in client.execute_command_stream("Hello", timeout=15.0):
+            async for chunk in client.execute_command_stream("Hello"):
                 chunk_count += 1
                 print(f"   收到块 #{chunk_count}: state={chunk.get('state')}, is_content={chunk.get('is_content')}, content_len={len(chunk.get('content', ''))}")
                 if chunk.get('is_content'):
@@ -131,7 +131,7 @@ def main():
     print(f"\n📊 测试结果: {passed}/{total} 通过")
     
     if passed == total:
-        print("🎉 所有测试通过！gradio_chat.py 更新成功")
+        print("🎉 所有测试通过！")
     else:
         print("⚠️  部分测试失败，需要进一步检查")
 

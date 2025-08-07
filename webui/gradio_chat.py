@@ -105,7 +105,7 @@ class TerminalChatBot:
             finally:
                 del self.user_clients[session_id]
     
-    def chat_with_terminal(self, message: str, history: List[Dict], request: gr.Request) -> Generator[tuple, None, None]:
+    def chat_with_qcli(self, message: str, history: List[Dict], request: gr.Request) -> Generator[tuple, None, None]:
         """与终端聊天 - 支持流式输出，返回 (聊天消息, 连接状态)"""
         
         # 使用 Gradio 的 session_hash 作为 session ID
@@ -169,7 +169,7 @@ class TerminalChatBot:
                             final_execution_time = 0.0
                             final_error = None
                             
-                            async for chunk in client.execute_command_stream(command, timeout=30.0):
+                            async for chunk in client.execute_command_stream(command, silence_timeout=120.0):
                                 # 实时发送流式内容
                                 if chunk.get("content") and chunk.get("is_content"):
                                     stream_queue.put({
@@ -365,16 +365,7 @@ def create_demo():
                 # WebSocket 连接状态控制面板
                 with gr.Group():
                     gr.Markdown("### 🔌 Q CLI 连接控制")
-                    
-                    with gr.Row():
-                        connection_status_btn = gr.Button(
-                            value="🔴 未初始化",
-                            variant="secondary",
-                            size="sm",
-                            interactive=False,
-                            elem_classes=["connection-status"]
-                        )
-                    
+
                     # 添加连接状态文本框
                     connection_status = gr.Textbox(
                         label="连接状态",
@@ -416,7 +407,7 @@ def create_demo():
                 
                 # 创建聊天界面
                 chat_interface = gr.ChatInterface(
-                    fn=bot.chat_with_terminal,
+                    fn=bot.chat_with_qcli,
                     type="messages",
                     chatbot=chatbot,
                     textbox=textbox,

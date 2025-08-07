@@ -29,7 +29,7 @@ class ConnectionManager:
     def __init__(self, host: str = "localhost", port: int = 7681,
                  username: str = "demo", password: str = "password123",
                  use_ssl: bool = False, terminal_type: str = "bash",
-                 silence_time: float = 2.0, max_init_time: float = 15.0):
+                 silence_time: float = 3.0):
         """
         初始化连接管理器
 
@@ -41,7 +41,6 @@ class ConnectionManager:
             use_ssl: 是否使用SSL
             terminal_type: 终端类型 (bash, qcli, python)
             silence_time: 静默时间（秒）- 无新消息时认为初始化结束
-            max_init_time: 最大初始化时间（秒）
         """
         self.host = host
         self.port = port
@@ -50,7 +49,6 @@ class ConnectionManager:
         self.use_ssl = use_ssl
         self.terminal_type = terminal_type
         self.silence_time = silence_time
-        self.max_init_time = max_init_time
 
         # 连接状态
         self.state = ConnectionState.DISCONNECTED
@@ -99,7 +97,12 @@ class ConnectionManager:
             return False
 
     async def _drain_initialization_messages(self):
-        """消费初始化消息直到流结束"""
+        """
+        消费初始化消息直到流结束
+        
+        基于活跃性检测，只要有消息持续输出就继续等待，
+        只有在完全静默时才认为初始化完成，不设置硬性时间限制
+        """
         messages = []
         
         # 设置临时处理器收集消息
@@ -111,24 +114,26 @@ class ConnectionManager:
         logger.info("开始消费初始化消息...")
         start_time = asyncio.get_event_loop().time()
         
-        # 等待消息流结束
+        # 基于活跃性的初始化检测 - 只要有消息就继续等待
         last_count = 0
+        last_progress_report = 0
         
         while True:
             await asyncio.sleep(self.silence_time)
             
             current_time = asyncio.get_event_loop().time()
+            elapsed_time = current_time - start_time
             
             # 检查是否有新消息
             if len(messages) == last_count:
-                # 没有新消息，流结束
+                # 没有新消息，初始化流结束
                 logger.info(f"检测到 {self.silence_time}s 无新消息，初始化流结束")
                 break
             
-            # 检查超时
-            if current_time - start_time > self.max_init_time:
-                logger.warning(f"初始化超时 ({self.max_init_time}s)，强制结束")
-                break
+            # 定期报告初始化进度（每10秒报告一次，避免日志过多）
+            if elapsed_time - last_progress_report >= 10.0:
+                logger.info(f"初始化进行中... 已耗时 {elapsed_time:.1f}s，收到 {len(messages)} 条消息")
+                last_progress_report = elapsed_time
             
             last_count = len(messages)
         
@@ -156,7 +161,7 @@ class ConnectionManager:
 
             logger.info("WebSocket 连接成功")
             
-            # 2. 消费初始化消息直到流结束
+            # 2. 消费初始化消息直到流结束（基于活跃性检测，无时间限制）
             self.state = ConnectionState.INITIALIZING
             await self._drain_initialization_messages()
 

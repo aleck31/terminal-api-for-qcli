@@ -188,6 +188,19 @@ class QcliOutputFormatter:
                 is_content=is_content
             )
         
+        elif current_state == QCLIState.READY:
+            # READY 状态下的消息可能是流式回复内容
+            # 检查是否是有效的回复内容
+            is_content = (cleaned_content.strip() and 
+                         not re.search(r'[>\\[\\]█⠙⠹⠸⠼⠴⠦⠧⠇⠏⠋]', cleaned_content) and
+                         not self.thinking_pattern.search(raw_message))
+            
+            return QCLIChunk(
+                state=current_state,
+                content=cleaned_content,
+                is_content=is_content
+            )
+        
         else:
             return QCLIChunk(
                 state=current_state,

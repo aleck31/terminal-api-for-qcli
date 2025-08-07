@@ -172,13 +172,13 @@ class TerminalAPIClient:
         except Exception as e:
             logger.error(f"断开连接时出错: {e}")
     
-    async def execute_command_stream(self, command: str, timeout: float = 30.0) -> AsyncIterator[Dict[str, Any]]:
+    async def execute_command_stream(self, command: str, silence_timeout: float = 30.0) -> AsyncIterator[Dict[str, Any]]:
         """
         执行命令并返回流式输出（异步迭代器）
         
         Args:
             command: 要执行的命令
-            timeout: 超时时间（秒）
+            silence_timeout: 静默超时时间（秒）- 只有完全无响应时才超时
             
         Yields:
             Dict: 每个流式输出块，包含 content, state, metadata 等信息
@@ -230,7 +230,7 @@ class TerminalAPIClient:
             # 启动命令执行任务
             async def execute_task():
                 try:
-                    result = await self._command_executor.execute_command(command, timeout)
+                    result = await self._command_executor.execute_command(command, silence_timeout)
                     # 命令完成，发送完成信号
                     output_queue.put_nowait({"_command_complete": True, "result": result})
                 except Exception as e:

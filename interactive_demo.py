@@ -94,8 +94,8 @@ class InteractiveTerminalDemo:
             success = False
             error_msg = None
             
-            # 使用新的流式接口
-            async for chunk in self.client.execute_command_stream(command, timeout=30.0):
+            # 使用新的流式接口 - 活跃性检测超时
+            async for chunk in self.client.execute_command_stream(command, silence_timeout=60.0):
                 # 显示有效内容
                 if chunk.get("content") and chunk.get("content").strip():
                     print(chunk["content"], end='', flush=True)

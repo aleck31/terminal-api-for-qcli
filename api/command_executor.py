@@ -53,12 +53,23 @@ class CommandExecution:
         self.complete_event = asyncio.Event()
         self.timeout_occurred = False
         
+        # 活跃性检测
+        self.last_message_time = time.time()  # 最后收到消息的时间
+        
         # 保存最后一个消息块（用于命令完成检测）
         self.last_chunk = ""
         
     @property
     def execution_time(self) -> float:
         return time.time() - self.start_time
+    
+    def update_activity(self):
+        """更新活跃性时间戳"""
+        self.last_message_time = time.time()
+    
+    def get_silence_duration(self) -> float:
+        """获取静默时长"""
+        return time.time() - self.last_message_time
 
 class CommandExecutor:
     """命令执行器 - 专注命令生命周期管理"""
@@ -99,6 +110,9 @@ class CommandExecutor:
             return
         
         try:
+            # 更新活跃性时间戳（收到任何消息都算活跃）
+            self.current_execution.update_activity()
+            
             # 保存最后一个消息块用于命令完成检测
             self.current_execution.last_chunk = raw_output
             
@@ -180,13 +194,13 @@ class CommandExecutor:
         
         return False
     
-    async def execute_command(self, command: str, timeout: float = ExecutionConstants.DEFAULT_TIMEOUT) -> CommandResult:
+    async def execute_command(self, command: str, silence_timeout: float = 30.0) -> CommandResult:
         """
         执行命令并等待结果
         
         Args:
             command: 要执行的命令
-            timeout: 超时时间（秒）
+            silence_timeout: 静默超时时间（秒）- 只有完全无响应时才超时
             
         Returns:
             CommandResult: 命令执行结果（包含原始输出）
@@ -205,12 +219,23 @@ class CommandExecutor:
             if not success:
                 raise Exception("发送命令失败")
             
-            # 等待命令完成或超时
-            try:
-                await asyncio.wait_for(self.current_execution.complete_event.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                logger.warning(f"命令执行超时: {command}")
-                self.current_execution.timeout_occurred = True
+            # 活跃性检测等待命令完成
+            while not self.current_execution.complete_event.is_set():
+                try:
+                    # 等待命令完成事件，使用短超时进行周期性检查
+                    await asyncio.wait_for(
+                        self.current_execution.complete_event.wait(), 
+                        timeout=1.0  # 每秒检查一次
+                    )
+                    break  # 命令完成
+                except asyncio.TimeoutError:
+                    # 检查是否真正超时（静默时间过长）
+                    silence_duration = self.current_execution.get_silence_duration()
+                    if silence_duration > silence_timeout:
+                        logger.warning(f"命令执行静默超时: {command} (静默 {silence_duration:.1f}s)")
+                        self.current_execution.timeout_occurred = True
+                        break
+                    # 否则继续等待（Q CLI 仍在工作）
             
             # 生成结果
             return self._create_command_result()
@@ -230,7 +255,10 @@ class CommandExecutor:
             return CommandResult.create_error_result("", "无执行状态")
         
         success = not self.current_execution.timeout_occurred
-        error = "命令执行超时" if self.current_execution.timeout_occurred else None
+        error = None
+        if self.current_execution.timeout_occurred:
+            silence_duration = self.current_execution.get_silence_duration()
+            error = f"命令执行静默超时 (静默 {silence_duration:.1f}s)"
         
         return CommandResult(
             command=self.current_execution.command,

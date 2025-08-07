@@ -187,14 +187,15 @@ build_ttyd_args() {
     args+=(-P "$(get_config ping_interval)")
     args+=(-d "$(get_config debug_level)")
     
+    # 进程管理参数
+    args+=(-s 15)  # 发送 SIGTERM (15) 信号，确保子进程也被杀死
+    
     # 终端类型
     args+=(-T "$(get_config terminal_type)")
     
     # 标题格式（如果支持的话）
     local title_format="$(get_config title_format)"
     title_format="${title_format/\{terminal\}/$terminal_type}"
-    # 注意：ttyd 可能不支持 --title-format，先注释掉
-    # args+=(--title-format "$title_format")
     
     # SSL 配置（使用短格式）
     if [[ "$(get_config ssl)" == "true" ]]; then

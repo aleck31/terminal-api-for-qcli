@@ -17,12 +17,13 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
-class ConnectionState(Enum):
-    """连接状态"""
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    ERROR = "error"
+class TtydProtocolState(Enum):
+    """ttyd 协议状态"""
+    DISCONNECTED = "disconnected"     # 未连接
+    CONNECTING = "connecting"         # 正在建立 WebSocket 连接
+    AUTHENTICATING = "authenticating" # 正在进行 ttyd 认证
+    PROTOCOL_READY = "protocol_ready" # ttyd 协议就绪，可以收发消息
+    PROTOCOL_ERROR = "protocol_error" # 协议层错误
 
 
 @dataclass
@@ -71,7 +72,7 @@ class ANSICleaner:
 
 
 class TtydWebSocketClient:
-    """修复后的 ttyd WebSocket 客户端"""
+    """ttyd WebSocket 客户端 - 专注协议实现"""
 
     def __init__(self, host: str = "localhost", port: int = 7681,
                  username: str = "demo", password: str = "password123",
@@ -94,11 +95,12 @@ class TtydWebSocketClient:
 
         # WebSocket连接
         self.websocket: Optional[websockets.WebSocketServerProtocol] = None
-        self.state = ConnectionState.DISCONNECTED
+        self._protocol_state = TtydProtocolState.DISCONNECTED
 
-        # 消息处理
+        # 回调处理器
         self.message_handler: Optional[Callable[[str], None]] = None
         self.error_handler: Optional[Callable[[Exception], None]] = None
+        self.state_change_handler: Optional[Callable[[TtydProtocolState], None]] = None
 
         # 内部状态
         self._listen_task: Optional[asyncio.Task] = None
@@ -112,27 +114,50 @@ class TtydWebSocketClient:
             f"{username}:{password}".encode()).decode()
 
     @property
+    def protocol_state(self) -> TtydProtocolState:
+        """获取协议状态（只读）"""
+        return self._protocol_state
+
+    def _set_protocol_state(self, new_state: TtydProtocolState):
+        """设置协议状态并通知上层"""
+        if self._protocol_state != new_state:
+            old_state = self._protocol_state
+            self._protocol_state = new_state
+            logger.debug(f"协议状态变化: {old_state.value} -> {new_state.value}")
+            
+            # 通知上层状态变化
+            if self.state_change_handler:
+                try:
+                    self.state_change_handler(new_state)
+                except Exception as e:
+                    logger.error(f"状态变化回调出错: {e}")
+
+    @property
     def url(self) -> str:
         """获取WebSocket URL"""
         protocol = "wss" if self.use_ssl else "ws"
         return f"{protocol}://{self.host}:{self.port}/ws"
 
     @property
-    def is_connected(self) -> bool:
-        """检查是否已连接"""
-        if self.websocket is None or self.state != ConnectionState.CONNECTED:
-            return False
+    def is_protocol_ready(self) -> bool:
+        """检查协议是否就绪"""
+        return (self.websocket is not None and 
+                self._protocol_state == TtydProtocolState.PROTOCOL_READY and
+                self._is_websocket_alive())
 
+    def _is_websocket_alive(self) -> bool:
+        """检查底层WebSocket连接是否存活"""
+        if self.websocket is None:
+            return False
+        
         try:
-            # 新版本websockets使用close_code检查
+            # 兼容不同版本的websockets库
             if hasattr(self.websocket, 'close_code'):
                 return self.websocket.close_code is None
-            # 旧版本使用closed属性
             elif hasattr(self.websocket, 'closed'):
                 return not self.websocket.closed
-            # 回退到状态检查
             else:
-                return self.state == ConnectionState.CONNECTED
+                return True  # 回退到假设连接正常
         except Exception:
             return False
 
@@ -144,14 +169,18 @@ class TtydWebSocketClient:
         """设置错误处理器"""
         self.error_handler = handler
 
+    def set_state_change_handler(self, handler: Callable[[TtydProtocolState], None]):
+        """设置状态变化处理器"""
+        self.state_change_handler = handler
+
     async def connect(self) -> bool:
         """连接到ttyd服务器"""
-        if self.is_connected:
-            logger.warning("已经连接到ttyd服务器")
+        if self.is_protocol_ready:
+            logger.warning("协议已就绪")
             return True
 
         try:
-            self.state = ConnectionState.CONNECTING
+            self._set_protocol_state(TtydProtocolState.CONNECTING)
             logger.info(f"连接到ttyd服务器: {self.url}")
 
             # WebSocket握手时提供HTTP基本认证头
@@ -165,20 +194,24 @@ class TtydWebSocketClient:
                 ping_timeout=None    # 禁用心跳超时
             )
 
-            self.state = ConnectionState.CONNECTED
-            logger.info("ttyd WebSocket连接成功")
+            logger.info("WebSocket连接成功，开始认证")
+            self._set_protocol_state(TtydProtocolState.AUTHENTICATING)
 
             # 启动消息监听
             self._should_stop = False
             self._listen_task = asyncio.create_task(self._listen_messages())
 
-            # 发送初始化消息（双重认证的第二部分）
+            # 发送初始化消息（ttyd认证）
             await self._send_initialization()
+            
+            # 认证完成，协议就绪
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_READY)
+            logger.info("ttyd协议就绪")
 
             return True
 
         except Exception as e:
-            self.state = ConnectionState.ERROR
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
             logger.error(f"连接ttyd失败: {e}")
             if self.error_handler:
                 self.error_handler(e)
@@ -190,8 +223,8 @@ class TtydWebSocketClient:
             # JSON初始化消息（ttyd双重认证的第二部分）
             init_data = {
                 "AuthToken": self.auth_token,
-                "columns": 80,
-                "rows": 24
+                "columns": 120,
+                "rows": 42
             }
 
             # 发送JSON初始化消息
@@ -219,29 +252,19 @@ class TtydWebSocketClient:
         # 关闭WebSocket连接
         if self.websocket:
             try:
-                # 兼容不同版本的websockets库
-                if hasattr(self.websocket, 'close_code'):
-                    # 新版本：检查close_code
-                    if self.websocket.close_code is None:
-                        await self.websocket.close()
-                elif hasattr(self.websocket, 'closed'):
-                    # 旧版本：检查closed属性
-                    if not self.websocket.closed:
-                        await self.websocket.close()
-                else:
-                    # 其他情况：直接尝试关闭
+                if self._is_websocket_alive():
                     await self.websocket.close()
             except Exception as e:
                 logger.warning(f"关闭WebSocket时出错: {e}")
 
         self.websocket = None
-        self.state = ConnectionState.DISCONNECTED
+        self._set_protocol_state(TtydProtocolState.DISCONNECTED)
         logger.info("ttyd连接已断开")
 
     async def send_command(self, command: str, terminal_type: str = "bash") -> bool:
         """发送命令到终端"""
-        if not self.is_connected:
-            logger.error("未连接到ttyd服务器")
+        if not self.is_protocol_ready:
+            logger.error("协议未就绪，无法发送命令")
             return False
 
         try:
@@ -263,13 +286,35 @@ class TtydWebSocketClient:
 
         except Exception as e:
             logger.error(f"发送命令失败: {e}")
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
+            if self.error_handler:
+                self.error_handler(e)
+            return False
+
+    async def send_input(self, data: str) -> bool:
+        """发送输入数据"""
+        if not self.is_protocol_ready:
+            logger.error("协议未就绪，无法发送数据")
+            return False
+
+        try:
+            # ttyd协议：INPUT命令 = '0' + 数据
+            message = '0' + data
+            await self.websocket.send(message)
+            logger.debug(f"发送输入: {repr(data)}")
+            return True
+
+        except Exception as e:
+            logger.error(f"发送输入失败: {e}")
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
             if self.error_handler:
                 self.error_handler(e)
             return False
 
     async def resize_terminal(self, rows: int, cols: int) -> bool:
         """调整终端大小"""
-        if not self.is_connected:
+        if not self.is_protocol_ready:
+            logger.error("协议未就绪，无法调整终端大小")
             return False
 
         try:
@@ -285,6 +330,7 @@ class TtydWebSocketClient:
 
         except Exception as e:
             logger.error(f"调整终端大小失败: {e}")
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
             return False
 
     async def _listen_messages(self):
@@ -294,15 +340,8 @@ class TtydWebSocketClient:
         try:
             while not self._should_stop and self.websocket:
                 try:
-                    # 检查连接状态（兼容不同版本）
-                    connection_alive = True
-                    if hasattr(self.websocket, 'close_code'):
-                        connection_alive = self.websocket.close_code is None
-                    elif hasattr(self.websocket, 'closed'):
-                        connection_alive = not self.websocket.closed
-                    # 如果没有这些属性，假设连接正常
-
-                    if not connection_alive:
+                    # 检查连接状态
+                    if not self._is_websocket_alive():
                         logger.warning("WebSocket连接已关闭")
                         break
 
@@ -323,15 +362,18 @@ class TtydWebSocketClient:
                     break
                 except Exception as e:
                     logger.error(f"接收消息时出错: {e}")
+                    self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
                     if self.error_handler:
                         self.error_handler(e)
                     break
 
         except Exception as e:
             logger.error(f"消息监听出错: {e}")
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
         finally:
             logger.info("停止监听ttyd消息")
-            self.state = ConnectionState.DISCONNECTED
+            if self._protocol_state != TtydProtocolState.DISCONNECTED:
+                self._set_protocol_state(TtydProtocolState.DISCONNECTED)
 
     async def _handle_message(self, message):
         """处理接收到的消息"""
@@ -371,6 +413,7 @@ class TtydWebSocketClient:
 
         except Exception as e:
             logger.error(f"处理消息时出错: {e}")
+            self._set_protocol_state(TtydProtocolState.PROTOCOL_ERROR)
             if self.error_handler:
                 self.error_handler(e)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Connection Manager
-负责管理 WebSocket 连接的生命周期，包括初始化消息预消费
+负责管理 WebSocket 连接的生命周期
 """
 
 import asyncio
@@ -9,22 +9,24 @@ import logging
 from typing import Optional, Callable
 from enum import Enum
 
-from .websocket_client import TtydWebSocketClient
+from .websocket_client import TtydWebSocketClient, TtydProtocolState
 
 logger = logging.getLogger(__name__)
 
 
 class ConnectionState(Enum):
-    """连接状态"""
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    INITIALIZING = "initializing"
-    CONNECTED = "connected"
-    ERROR = "error"
+    """连接管理状态"""
+    IDLE = "idle"                     # 空闲，未尝试连接
+    CONNECTING = "connecting"         # 正在连接中
+    CONNECTED = "connected"           # 已连接，可用
+    RECONNECTING = "reconnecting"     # 重连中
+    FAILED = "failed"                # 连接失败
+    DISCONNECTING = "disconnecting"   # 正在断开
+    DISCONNECTED = "disconnected"     # 已断开
 
 
 class ConnectionManager:
-    """连接管理器 - 负责 WebSocket 连接的生命周期和初始化消息预消费"""
+    """连接管理器 - 负责 WebSocket 连接的生命周期"""
 
     def __init__(self, host: str = "localhost", port: int = 7681,
                  username: str = "demo", password: str = "password123",
@@ -50,8 +52,8 @@ class ConnectionManager:
         self.terminal_type = terminal_type
         self.silence_time = silence_time
 
-        # 连接状态
-        self.state = ConnectionState.DISCONNECTED
+        # 连接状态管理
+        self._connection_state = ConnectionState.IDLE
 
         # WebSocket客户端
         self._client = TtydWebSocketClient(
@@ -60,23 +62,75 @@ class ConnectionManager:
             use_ssl=use_ssl
         )
 
+        # 设置协议状态变化回调
+        self._client.set_state_change_handler(self._handle_protocol_state_change)
+
         # 回调函数
         self._user_message_handler: Optional[Callable[[str], None]] = None
         self._error_handler: Optional[Callable[[Exception], None]] = None
 
+    @property
+    def state(self) -> ConnectionState:
+        """获取连接管理状态"""
+        return self._connection_state
+
+    def _set_connection_state(self, new_state: ConnectionState):
+        """设置连接状态"""
+        if self._connection_state != new_state:
+            old_state = self._connection_state
+            self._connection_state = new_state
+            logger.debug(f"连接状态变化: {old_state.value} -> {new_state.value}")
+
+    def _handle_protocol_state_change(self, protocol_state: TtydProtocolState):
+        """处理协议层状态变化"""
+        logger.debug(f"收到协议状态变化: {protocol_state.value}")
+        
+        # 将协议状态映射为连接管理状态
+        if protocol_state == TtydProtocolState.CONNECTING:
+            # 协议层开始连接时，连接管理层可能已经是 CONNECTING 状态
+            pass
+        elif protocol_state == TtydProtocolState.AUTHENTICATING:
+            # 认证阶段仍然是连接中
+            if self._connection_state == ConnectionState.CONNECTING:
+                pass  # 保持连接中状态
+        elif protocol_state == TtydProtocolState.PROTOCOL_READY:
+            # 协议就绪 = 连接成功
+            if self._connection_state in [ConnectionState.CONNECTING, ConnectionState.RECONNECTING]:
+                self._set_connection_state(ConnectionState.CONNECTED)
+        elif protocol_state == TtydProtocolState.PROTOCOL_ERROR:
+            # 协议错误 = 连接失败
+            if self._connection_state == ConnectionState.RECONNECTING:
+                self._set_connection_state(ConnectionState.FAILED)
+            else:
+                self._set_connection_state(ConnectionState.FAILED)
+        elif protocol_state == TtydProtocolState.DISCONNECTED:
+            # 协议断开 = 连接断开
+            if self._connection_state == ConnectionState.DISCONNECTING:
+                self._set_connection_state(ConnectionState.DISCONNECTED)
+            else:
+                # 意外断开
+                self._set_connection_state(ConnectionState.DISCONNECTED)
+
+    @property
+    def is_connected(self) -> bool:
+        """检查连接状态"""
+        return (self._connection_state == ConnectionState.CONNECTED and 
+                self._client.is_protocol_ready)
+
     def set_message_handler(self, handler: Callable[[str], None]):
         """设置用户消息处理器"""
         self._user_message_handler = handler
+        # 同时设置到协议层
+        self._client.set_message_handler(handler)
 
     def set_error_handler(self, handler: Callable[[Exception], None]):
         """设置错误处理器"""
         self._error_handler = handler
-        self._client.set_error_handler(self._handle_error)
+        self._client.set_error_handler(self._handle_protocol_error)
 
-    def _handle_error(self, error: Exception):
-        """内部错误处理"""
-        logger.error(f"连接错误: {error}")
-        self.state = ConnectionState.ERROR
+    def _handle_protocol_error(self, error: Exception):
+        """处理协议层错误"""
+        logger.error(f"协议层错误: {error}")
 
         if self._error_handler:
             try:
@@ -84,112 +138,51 @@ class ConnectionManager:
             except Exception as e:
                 logger.error(f"错误处理器出错: {e}")
 
-    @property
-    def is_connected(self) -> bool:
-        """检查连接状态"""
-        if self._client is None:
-            return False
-
-        try:
-            return self._client.is_connected and self.state == ConnectionState.CONNECTED
-        except Exception as e:
-            logger.debug(f"检查连接状态时出错: {e}")
-            return False
-
-    async def _drain_initialization_messages(self):
-        """
-        消费初始化消息直到流结束
-        
-        基于活跃性检测，只要有消息持续输出就继续等待，
-        只有在完全静默时才认为初始化完成，不设置硬性时间限制
-        """
-        messages = []
-        
-        # 设置临时处理器收集消息
-        def collector(msg):
-            messages.append(msg)
-        
-        self._client.set_message_handler(collector)
-        
-        logger.info("开始消费初始化消息...")
-        start_time = asyncio.get_event_loop().time()
-        
-        # 基于活跃性的初始化检测 - 只要有消息就继续等待
-        last_count = 0
-        last_progress_report = 0
-        
-        while True:
-            await asyncio.sleep(self.silence_time)
-            
-            current_time = asyncio.get_event_loop().time()
-            elapsed_time = current_time - start_time
-            
-            # 检查是否有新消息
-            if len(messages) == last_count:
-                # 没有新消息，初始化流结束
-                logger.info(f"检测到 {self.silence_time}s 无新消息，初始化流结束")
-                break
-            
-            # 定期报告初始化进度（每10秒报告一次，避免日志过多）
-            if elapsed_time - last_progress_report >= 10.0:
-                logger.info(f"初始化进行中... 已耗时 {elapsed_time:.1f}s，收到 {len(messages)} 条消息")
-                last_progress_report = elapsed_time
-            
-            last_count = len(messages)
-        
-        total_time = asyncio.get_event_loop().time() - start_time
-        logger.info(f"初始化完成: 丢弃 {len(messages)} 条消息，耗时 {total_time:.1f}s")
-
     async def connect(self) -> bool:
         """
-        建立连接并处理初始化
-
+        建立连接
+        
         Returns:
             bool: 连接是否成功
         """
-        logger.info(f"连接到ttyd服务器: {self.host}:{self.port}")
-
-        try:
-            self.state = ConnectionState.CONNECTING
-
-            # 1. 建立 WebSocket 连接
-            success = await self._client.connect()
-            if not success:
-                self.state = ConnectionState.ERROR
-                logger.error("WebSocket 连接建立失败")
-                return False
-
-            logger.info("WebSocket 连接成功")
-            
-            # 2. 消费初始化消息直到流结束（基于活跃性检测，无时间限制）
-            self.state = ConnectionState.INITIALIZING
-            await self._drain_initialization_messages()
-
-            # 3. 切换到用户消息处理
-            if self._user_message_handler:
-                self._client.set_message_handler(self._user_message_handler)
-            
-            self.state = ConnectionState.CONNECTED
-            logger.info("连接完全建立，可以开始用户交互")
+        if self.is_connected:
+            logger.warning("已经连接")
             return True
+
+        logger.info(f"连接到ttyd服务器: {self.host}:{self.port}")
+        
+        try:
+            self._set_connection_state(ConnectionState.CONNECTING)
+            
+            # 委托给协议层建立连接
+            success = await self._client.connect()
+            
+            if success:
+                # 状态变化会通过回调自动更新
+                logger.info("连接建立成功")
+                return True
+            else:
+                self._set_connection_state(ConnectionState.FAILED)
+                logger.error("连接建立失败")
+                return False
 
         except Exception as e:
             logger.error(f"连接时出错: {e}")
-            self.state = ConnectionState.ERROR
-            self._handle_error(e)
+            self._set_connection_state(ConnectionState.FAILED)
+            self._handle_protocol_error(e)
             return False
 
     async def disconnect(self):
         """断开连接"""
         logger.info("断开连接")
-
+        
         try:
-            if self._client:
-                await self._client.disconnect()
+            self._set_connection_state(ConnectionState.DISCONNECTING)
+            await self._client.disconnect()
+            # 状态变化会通过回调自动更新为 DISCONNECTED
         except Exception as e:
             logger.error(f"断开连接时出错: {e}")
-        finally:
-            self.state = ConnectionState.DISCONNECTED
+            self._set_connection_state(ConnectionState.DISCONNECTED)
 
     async def send_input(self, data: str) -> bool:
         """
@@ -209,7 +202,7 @@ class ConnectionManager:
             return await self._client.send_input(data)
         except Exception as e:
             logger.error(f"发送数据时出错: {e}")
-            self._handle_error(e)
+            self._handle_protocol_error(e)
             return False
 
     async def send_command(self, command: str) -> bool:
@@ -230,7 +223,7 @@ class ConnectionManager:
             return await self._client.send_command(command, self.terminal_type)
         except Exception as e:
             logger.error(f"发送命令时出错: {e}")
-            self._handle_error(e)
+            self._handle_protocol_error(e)
             return False
 
     async def resize_terminal(self, rows: int, cols: int) -> bool:
@@ -252,7 +245,7 @@ class ConnectionManager:
             return await self._client.resize_terminal(rows, cols)
         except Exception as e:
             logger.error(f"调整终端大小时出错: {e}")
-            self._handle_error(e)
+            self._handle_protocol_error(e)
             return False
 
     def get_connection_info(self) -> dict:
@@ -266,7 +259,8 @@ class ConnectionManager:
             'host': self.host,
             'port': self.port,
             'use_ssl': self.use_ssl,
-            'state': self.state.value,
+            'connection_state': self._connection_state.value,
+            'protocol_state': self._client.protocol_state.value,
             'is_connected': self.is_connected,
             'terminal_type': self.terminal_type
         }

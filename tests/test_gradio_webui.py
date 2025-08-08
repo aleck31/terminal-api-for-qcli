@@ -66,14 +66,14 @@ async def test_stream_interface():
         print("✅ 客户端创建成功")
         
         # 测试连接
-        connected = await client.connect()
+        connected = await client.initialize()
         if connected:
             print("✅ 连接成功")
             
             # 测试流式接口
             print("🧪 测试流式接口...")
             chunk_count = 0
-            async for chunk in client.execute_command_stream("Hello"):
+            async for chunk in client.execute_command_stream("Hi, 帮我查一下新加坡 region 的 g6e.xlarge 实例的价格"):
                 chunk_count += 1
                 print(f"   收到块 #{chunk_count}: state={chunk.get('state')}, is_content={chunk.get('is_content')}, content_len={len(chunk.get('content', ''))}")
                 if chunk.get('is_content'):
@@ -85,7 +85,7 @@ async def test_stream_interface():
                     print("⚠️  达到最大块数限制，停止测试")
                     break
             
-            await client.disconnect()
+            await client.shutdown()
             print("✅ 断开连接成功")
         else:
             print("❌ 连接失败 - 可能 ttyd 服务未启动")

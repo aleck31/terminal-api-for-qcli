@@ -11,13 +11,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .utils.formatter import clean_terminal_text
-from .utils.qcli_formatter import clean_qcli_text, process_qcli_chunk, QCLIChunk, QCLIState
+from .utils.qcli_formatter import clean_qcli_text, process_qcli_chunk, QCLIChunk, QCLIResponseType
 
 logger = logging.getLogger(__name__)
 
 class TerminalType(Enum):
     """终端类型"""
-    BASH = "bash"
+    GENERIC = "generic"
     QCLI = "qcli"
     PYTHON = "python"
 
@@ -33,7 +33,7 @@ class ProcessedOutput:
 class OutputProcessor:
     """输出处理器 - 专注数据转换，支持多种终端类型"""
     
-    def __init__(self, terminal_type: TerminalType = TerminalType.BASH, enable_formatting: bool = True):
+    def __init__(self, terminal_type: TerminalType = TerminalType.GENERIC, enable_formatting: bool = True):
         """
         初始化输出处理器
         
@@ -118,7 +118,7 @@ class OutputProcessor:
         # 只返回有效的回复内容
         if chunk.is_content:
             return chunk.content
-        elif chunk.state == QCLIState.THINKING:
+        elif chunk.state == QCLIResponseType.THINKING:
             return "Thinking..."  # 可以选择是否显示思考状态
         else:
             return ""  # 其他状态不返回内容

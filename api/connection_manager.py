@@ -65,9 +65,19 @@ class ConnectionManager:
         # 设置协议状态变化回调
         self._client.set_state_change_handler(self._handle_protocol_state_change)
 
-        # 回调函数
-        self._user_message_handler: Optional[Callable[[str], None]] = None
+        # 错误处理器
         self._error_handler: Optional[Callable[[Exception], None]] = None
+        
+        # 状态变化回调
+        self._state_change_callback: Optional[Callable[[ConnectionState], None]] = None
+        
+        # 事件驱动消息处理
+        self._message_listeners = []  # 临时监听器列表
+        self._primary_handler = None   # 主要处理器
+        
+        # 事件驱动消息处理
+        self._message_listeners = []  # 临时监听器列表
+        self._primary_handler = None   # 主要处理器
 
     @property
     def state(self) -> ConnectionState:
@@ -80,6 +90,17 @@ class ConnectionManager:
             old_state = self._connection_state
             self._connection_state = new_state
             logger.debug(f"连接状态变化: {old_state.value} -> {new_state.value}")
+            
+            # 通知上层状态变化
+            if self._state_change_callback:
+                try:
+                    self._state_change_callback(new_state)
+                except Exception as e:
+                    logger.error(f"状态变化回调出错: {e}")
+
+    def set_state_change_callback(self, callback: Callable[[ConnectionState], None]):
+        """设置状态变化回调"""
+        self._state_change_callback = callback
 
     def _handle_protocol_state_change(self, protocol_state: TtydProtocolState):
         """处理协议层状态变化"""
@@ -117,11 +138,44 @@ class ConnectionManager:
         return (self._connection_state == ConnectionState.CONNECTED and 
                 self._client.is_protocol_ready)
 
-    def set_message_handler(self, handler: Callable[[str], None]):
-        """设置用户消息处理器"""
-        self._user_message_handler = handler
-        # 同时设置到协议层
-        self._client.set_message_handler(handler)
+    def set_primary_handler(self, handler: Callable[[str], None]):
+        """设置主要处理器（正常业务逻辑）"""
+        self._primary_handler = handler
+        # 设置消息分发器到协议层
+        self._client.set_message_handler(self._dispatch_message)
+        logger.debug("设置主要消息处理器")
+    
+    def add_temp_listener(self, listener: Callable[[str], None]) -> int:
+        """添加临时监听器，返回监听器ID"""
+        self._message_listeners.append(listener)
+        listener_id = len(self._message_listeners) - 1
+        logger.debug(f"添加临时监听器: ID={listener_id}")
+        return listener_id
+    
+    def remove_temp_listener(self, listener_id: int):
+        """移除临时监听器"""
+        if 0 <= listener_id < len(self._message_listeners):
+            self._message_listeners[listener_id] = None  # 标记为删除
+            logger.debug(f"移除临时监听器: ID={listener_id}")
+        else:
+            logger.warning(f"无效的监听器ID: {listener_id}")
+    
+    def _dispatch_message(self, message: str):
+        """分发消息给所有监听器和主处理器"""
+        # 先给临时监听器（如初始化收集器）
+        for i, listener in enumerate(self._message_listeners):
+            if listener:  # 跳过已删除的
+                try:
+                    listener(message)
+                except Exception as e:
+                    logger.error(f"临时监听器 {i} 出错: {e}")
+        
+        # 再给主要处理器（如CommandExecutor）
+        if self._primary_handler:
+            try:
+                self._primary_handler(message)
+            except Exception as e:
+                logger.error(f"主要处理器出错: {e}")
 
     def set_error_handler(self, handler: Callable[[Exception], None]):
         """设置错误处理器"""

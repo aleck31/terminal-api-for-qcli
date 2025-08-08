@@ -41,9 +41,9 @@ def main():
     
     # 测试脚本列表
     tests = [
-        ("tests/test_terminal_api.py", "终端API基础测试"),
-        ("tests/test_formatted_output.py", "格式化输出测试"),
-        ("tests/test_ttyd_service.py", "服务脚本测试"),
+        ("test_terminal_api.py", "终端API基础测试"),
+        ("test_formatted_output.py", "格式化输出测试"),
+        ("test_ttyd_service.py", "服务脚本测试"),
     ]
     
     # 检查是否运行集成测试

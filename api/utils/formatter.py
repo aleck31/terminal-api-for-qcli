@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Formatter Tools
+通用终端程序格式化工具
 """
 
 import re

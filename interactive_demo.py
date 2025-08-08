@@ -35,7 +35,7 @@ class InteractiveTerminalDemo:
             format_output=True  # 启用格式化输出
         )
         
-        success = await self.client.connect()
+        success = await self.client.initialize()
         if success:
             print("✅ 连接成功！")
             print("💡 提示：输入 'help' 查看帮助，输入 'quit' 或 'exit' 退出")
@@ -171,7 +171,7 @@ class InteractiveTerminalDemo:
         """清理资源"""
         if self.client:
             print("🔌 断开连接...")
-            await self.client.disconnect()
+            await self.client.shutdown()
             print("✅ 连接已断开")
     
     async def run(self):

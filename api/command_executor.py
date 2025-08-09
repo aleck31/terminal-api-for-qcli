@@ -153,19 +153,17 @@ class CommandExecutor:
             return self._is_generic_command_complete(raw_message)
     
     def _is_qcli_command_complete(self, raw_message: str) -> bool:
-        """Q CLI 命令完成检测"""
-        # Q CLI 完成标志：新提示符出现
-        completion_indicators = [
-            '\x1b[31m!\x1b[35m> \x1b(B\x1b[m',  # 新提示符（!>）
-            '\x1b[31m!\x1b[35m>\x1b(B\x1b[m',   # 可能的变体
-            '\x1b[35m> \x1b(B\x1b[m',   # 新提示符（>）
-            '\x1b[35m>\x1b(B\x1b[m',    # 可能的变体
-        ]
+        """Q CLI 命令完成检测 - 使用 QcliOutputFormatter 的统一检测"""
+        if not hasattr(self, '_qcli_formatter'):
+            from api.utils.qcli_formatter import QcliOutputFormatter
+            self._qcli_formatter = QcliOutputFormatter()
         
-        for indicator in completion_indicators:
-            if indicator in raw_message:
-                logger.debug("检测到 Q CLI 命令完成：新提示符出现")
-                return True
+        # 使用 QcliOutputFormatter 的完成检测
+        _, is_complete = self._qcli_formatter.clean_and_detect_completion(raw_message)
+        
+        if is_complete:
+            logger.debug("检测到 Q CLI 命令完成：新提示符出现")
+            return True
         
         # 超时保护
         if self.current_execution.execution_time > ExecutionConstants.QCLI_MAX_TIMEOUT:

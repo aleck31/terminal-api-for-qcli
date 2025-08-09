@@ -43,7 +43,7 @@ terminal-api-for-qcli/
 │   ├── connection_state_design.md  # 连接状态管理设计
 │   └── terminal_api_client_redesign.md # 业务层重构设计
 ├── start-webui.sh               # Gradio WebUI 启动脚本
-├── interactive_demo.py          # 命令行演示
+├── demo_qterm_interactive.py          # 命令行演示
 └── README.md
 ```
 
@@ -84,7 +84,8 @@ terminal-api-for-qcli/
 ### 数据流程
 ```
 TtydWebSocketClient → ConnectionManager → CommandExecutor → OutputProcessor → TerminalAPIClient
-    原始数据               事件分发             检测逻辑          统一处理          API格式输出
+    ↓                     ↓                   ↓                 ↓                ↓
+  原始数据               事件分发             检测逻辑            统一处理          API结构化输出
 ```
 
 #### **🔧 组件职责**
@@ -120,7 +121,7 @@ TtydWebSocketClient → ConnectionManager → CommandExecutor → OutputProcesso
 - **Web UI**: http://localhost:7860 (Chatbot)
 - **通用终端**: http://localhost:7681
 - **Q CLI 终端**: http://localhost:7682
-- **交互演示**: `uv run python interactive_demo.py`
+- **交互演示**: `uv run python demo_qterm_interactive.py`
 
 默认认证: `demo` / `password123`
 

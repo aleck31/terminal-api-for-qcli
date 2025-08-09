@@ -34,43 +34,6 @@ class TtydMessage:
     message_type: str = "output"
 
 
-class ANSICleaner:
-    """ANSI清理器 - 兼容各种终端类型"""
-
-    def __init__(self):
-        # 组合正则表达式 - 清理ANSI转义序列和OSC序列
-        self.ansi_pattern = re.compile(
-            r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        self.osc_pattern = re.compile(r'\x1B\][^\x07]*\x07')
-        self.control_chars = re.compile(
-            r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]')
-
-    def clean(self, text: str) -> str:
-        """清理ANSI转义序列"""
-        if not text:
-            return text
-
-        original_text = text
-
-        # 移除ANSI转义序列
-        text = self.ansi_pattern.sub('', text)
-        # 移除OSC序列
-        text = self.osc_pattern.sub('', text)
-        # 移除其他控制字符（保留换行符、制表符）
-        text = self.control_chars.sub('', text)
-
-        # 调试：如果清理前后有差异，记录日志
-        if original_text != text:
-            logger.debug(f"ANSI清理: {repr(original_text)} -> {repr(text)}")
-
-        return text.strip()
-
-    def is_meaningful(self, text: str) -> bool:
-        """判断是否为有意义的内容"""
-        cleaned = self.clean(text)
-        return len(cleaned) > 0 and not cleaned.isspace()
-
-
 class TtydWebSocketClient:
     """ttyd WebSocket 客户端 - 专注协议实现"""
 
@@ -105,9 +68,6 @@ class TtydWebSocketClient:
         # 内部状态
         self._listen_task: Optional[asyncio.Task] = None
         self._should_stop = False
-
-        # ANSI清理器
-        self.ansi_cleaner = ANSICleaner()
 
         # 认证令牌
         self.auth_token = base64.b64encode(
@@ -393,16 +353,11 @@ class TtydWebSocketClient:
 
                 # 根据命令类型处理
                 if command == '0':  # OUTPUT
-                    # 终端输出 - 这是我们主要关心的
-                    cleaned_data = self.ansi_cleaner.clean(data)
-
-                    # 只处理有意义的内容
-                    if self.ansi_cleaner.is_meaningful(data):
-                        if self.message_handler:
-                            # 传递原始数据用于命令完成检测，清理后数据用于显示
-                            self.message_handler(data)  # 使用原始数据！
-                        else:
-                            logger.debug(f"收到终端输出: {repr(cleaned_data[:100])}")
+                    # 终端输出
+                    if self.message_handler:
+                        self.message_handler(data)
+                    else:
+                        logger.debug(f"收到终端输出: {repr(data[:50])}")
 
                 elif command == '1':  # SET_WINDOW_TITLE
                     logger.debug(f"收到窗口标题设置: {data}")

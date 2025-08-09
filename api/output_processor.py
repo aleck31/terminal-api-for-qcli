@@ -11,7 +11,7 @@ from typing import Optional
 
 from .data_structures import StreamChunk, ChunkType, MetadataBuilder, TerminalType
 from .utils.formatter import clean_terminal_text
-from .utils.qcli_formatter import QcliOutputFormatter, QCLIResponseType
+from .utils.qcli_formatter import QcliOutputFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +31,6 @@ class OutputProcessor:
         # 初始化格式化器
         if terminal_type == TerminalType.QCLI:
             self.qcli_formatter = QcliOutputFormatter()
-        
-        # 命令回显移除状态（每个命令独立）
-        self._echo_removed_for_command = {}
     
     def process_raw_message(self, raw_message: str, command: str = "", 
                           terminal_type: Optional[TerminalType] = None) -> Optional[StreamChunk]:
@@ -70,7 +67,7 @@ class OutputProcessor:
     
     def _process_qcli_message(self, raw_message: str) -> Optional[StreamChunk]:
         """
-        Q CLI 分支处理
+        Q CLI 分支处理 - 简化版本，直接使用统一的ChunkType
         
         Args:
             raw_message: 原始消息
@@ -78,33 +75,29 @@ class OutputProcessor:
         Returns:
             StreamChunk: 处理后的数据块
         """
-        # 1. 检测消息类型（基于原始数据）
-        qcli_message_type = self.qcli_formatter.detect_message_type(raw_message)
+        # 1. 检测消息类型（直接返回统一的ChunkType）
+        chunk_type = self.qcli_formatter.detect_message_type(raw_message)
         
         # 2. 清理消息内容
         clean_content = self.qcli_formatter.clean_qcli_output(raw_message)
         
-        # 3. 映射到统一的 ChunkType
-        chunk_type = self._map_qcli_type_to_chunk_type(qcli_message_type)
-        
-        # 4. 根据类型决定内容
+        # 3. 根据类型决定内容
         if chunk_type in [ChunkType.THINKING, ChunkType.TOOL_USE, ChunkType.COMPLETE]:
             # 状态类型：不返回内容，但保留类型信息
             content = ""
         elif chunk_type == ChunkType.CONTENT:
             # 内容类型：返回清理后的内容
             content = clean_content
-            # 如果清理后没有有效内容，跳过这个消息
-            if not content.strip():
-                return None
+            # 重要：不要过滤空格！单独的空格也是有效内容
+            # 这解决了空格丢失的问题
         else:
             # 其他类型
             content = clean_content
         
-        # 5. 构建元数据
-        metadata = self._build_qcli_metadata(raw_message, clean_content, chunk_type, qcli_message_type)
+        # 4. 构建元数据
+        metadata = self._build_qcli_metadata(raw_message, clean_content, chunk_type)
         
-        # 6. 构建 StreamChunk
+        # 5. 构建 StreamChunk
         return StreamChunk(
             content=content,
             type=chunk_type,
@@ -145,19 +138,9 @@ class OutputProcessor:
             timestamp=time.time()
         )
     
-    def _map_qcli_type_to_chunk_type(self, qcli_type: QCLIResponseType) -> ChunkType:
-        """将 Q CLI 类型映射到统一的 ChunkType"""
-        mapping = {
-            QCLIResponseType.THINKING: ChunkType.THINKING,
-            QCLIResponseType.TOOL_USE: ChunkType.TOOL_USE,
-            QCLIResponseType.STREAMING: ChunkType.CONTENT,
-            QCLIResponseType.COMPLETE: ChunkType.COMPLETE,
-        }
-        return mapping.get(qcli_type, ChunkType.CONTENT)
-    
     def _build_qcli_metadata(self, raw_message: str, clean_content: str, 
-                           chunk_type: ChunkType, qcli_type: QCLIResponseType) -> dict:
-        """构建 Q CLI 特定的元数据"""
+                           chunk_type: ChunkType) -> dict:
+        """构建 Q CLI 特定的元数据 - 简化版本"""
         if chunk_type == ChunkType.THINKING:
             return MetadataBuilder.for_thinking(len(raw_message), "qcli")
         elif chunk_type == ChunkType.TOOL_USE:
@@ -170,20 +153,15 @@ class OutputProcessor:
                 "qcli"
             )
         elif chunk_type == ChunkType.COMPLETE:
-            # 完成状态的元数据需要从外部传入执行时间等信息
-            # 这里先提供基础信息
             return {
                 "raw_length": len(raw_message),
-                "terminal_type": "qcli",
-                "qcli_message_type": qcli_type.value
+                "terminal_type": "qcli"
             }
         else:
             return {"raw_length": len(raw_message), "terminal_type": "qcli"}
     
     def _extract_tool_name(self, raw_message: str) -> str:
         """从原始消息中提取工具名称"""
-        # 基于真实数据的工具名称提取
-        # 格式："\u001b[38;5;13m🛠️  Using tool: web_search_exa\u001b[38;5;2m (trusted)\u001b[39m"
         import re
         
         # 清理后再提取
@@ -211,12 +189,11 @@ class OutputProcessor:
         if not cleaned:
             return ""
         
-        # 2. 移除命令回显（只移除一次）
-        if command and not self._echo_removed_for_command.get(command, False):
-            if command in cleaned:
-                cleaned = cleaned.replace(command, "", 1)
-                self._echo_removed_for_command[command] = True
-                logger.debug(f"移除命令回显: {command}")
+        # 2. 移除命令回显
+        if command and command in cleaned:
+            # 只移除第一次出现的命令
+            cleaned = cleaned.replace(command, "", 1)
+            logger.debug(f"移除命令回显: {command}")
         
         # 3. 额外清理
         cleaned = self._additional_cleanup(cleaned)
@@ -244,15 +221,6 @@ class OutputProcessor:
         result = result.strip()
         
         return result
-    
-    def reset_command_state(self, command: str):
-        """重置特定命令的状态"""
-        if command in self._echo_removed_for_command:
-            del self._echo_removed_for_command[command]
-    
-    def clear_all_states(self):
-        """清理所有命令状态"""
-        self._echo_removed_for_command.clear()
     
     # 向后兼容的方法（保留旧接口，内部调用新接口）
     def process_stream_output(self, raw_output: str, command: str) -> str:

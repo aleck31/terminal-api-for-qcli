@@ -153,17 +153,31 @@ class TerminalAPIClient:
 
     async def _consume_initialization_messages(self):
         """
-        消费 Q CLI 初始化消息直到流结束 - 使用事件驱动模式
+        消费 Q CLI 初始化消息直到检测到结束标志
         
-        基于活跃性检测，只要有消息持续输出就继续等待，
-        只有在完全静默时才认为初始化完成，不设置硬性时间限制
+        简单逻辑：丢弃所有初始化消息，直到检测到 Q CLI 提示符
         """
-        messages = []
-        silence_time = 3.0  # 静默检测时间
+        # 创建 QcliOutputFormatter 用于检测
+        from api.utils.qcli_formatter import QcliOutputFormatter
+        qcli_formatter = QcliOutputFormatter()
         
-        # 设置临时监听器收集初始化消息
-        def initialization_collector(msg):
-            messages.append(msg)
+        initialization_complete = False
+        message_count = 0
+        
+        # 设置临时监听器丢弃初始化消息
+        def initialization_collector(raw_message):
+            nonlocal initialization_complete, message_count
+            message_count += 1
+            
+            # 使用 clean_and_detect_completion 检测结束标志
+            clean_message, is_complete = qcli_formatter.clean_and_detect_completion(raw_message)
+            
+            if is_complete:
+                initialization_complete = True
+                logger.info(f"检测到 Q CLI 提示符，初始化完成")
+        
+        # 关键修复：先设置消息处理器，这样 WebSocket 消息才能传递到 ConnectionManager
+        self._connection_manager.set_primary_handler(lambda msg: None)  # 临时处理器
         
         # 使用事件驱动：添加临时监听器，不影响主处理器
         listener_id = self._connection_manager.add_temp_listener(initialization_collector)
@@ -172,30 +186,19 @@ class TerminalAPIClient:
         start_time = asyncio.get_event_loop().time()
         
         try:
-            # 基于活跃性的初始化检测 - 只要有消息就继续等待
-            last_count = 0
-            last_progress_report = 0
+            # 等待直到检测到结束标志
+            check_interval = 0.1  # 检查间隔
             
-            while True:
-                await asyncio.sleep(silence_time)
+            while not initialization_complete:
+                await asyncio.sleep(check_interval)
                 
-                current_time = asyncio.get_event_loop().time()
-                elapsed_time = current_time - start_time
-                
-                # 检查是否有新消息
-                if len(messages) == last_count:
-                    logger.info(f"检测到 {silence_time}s 无新消息，Q CLI 初始化流结束")
-                    break
-                
-                # 定期报告初始化进度（每10秒报告一次，避免日志过多）
-                if elapsed_time - last_progress_report >= 10.0:
-                    logger.info(f"Q CLI 初始化进行中... 已耗时 {elapsed_time:.1f}s，收到 {len(messages)} 条消息")
-                    last_progress_report = elapsed_time
-                
-                last_count = len(messages)
+                # 每3秒报告一次进度
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if int(elapsed) % 3 == 0 and elapsed > 0:
+                    logger.info(f"Q CLI 初始化进行中... 已耗时 {elapsed:.1f}s")
             
             total_time = asyncio.get_event_loop().time() - start_time
-            logger.info(f"Q CLI 初始化完成: 丢弃 {len(messages)} 条消息，耗时 {total_time:.1f}s")
+            logger.info(f"Q CLI 初始化完成: 丢弃 {message_count} 条消息，耗时 {total_time:.1f}s")
             
         finally:
             # 使用事件驱动：移除临时监听器
@@ -212,12 +215,12 @@ class TerminalAPIClient:
     
     async def initialize(self) -> bool:
         """
-        初始化终端（包含网络连接建立和 Q CLI 业务初始化）
+        初始化终端（包含网络连接建立和业务初始化）
         
         Returns:
             bool: 初始化是否成功
         """
-        logger.info(f"初始化终端: {self.host}:{self.port}")
+        logger.info(f"初始化终端: {self.host}:{self.port}, 类型: {self.terminal_type.value}")
         
         try:
             # 1. 检查并建立网络连接
@@ -230,9 +233,15 @@ class TerminalAPIClient:
 
             logger.info("网络连接成功")
             
-            # 2. 处理 Q CLI 业务初始化
+            # 2. 根据终端类型处理初始化
             self._set_state(TerminalBusinessState.INITIALIZING)
-            await self._consume_initialization_messages()
+            
+            if self.terminal_type == TerminalType.QCLI:
+                # Q CLI 需要等待初始化消息和提示符
+                await self._consume_initialization_messages()
+            else:
+                # GENERIC 终端不需要等待，直接设置消息处理
+                logger.info("GENERIC 终端，跳过初始化消息等待")
             
             # 3. 设置正常的消息处理流程
             self._setup_normal_message_handling()

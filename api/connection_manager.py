@@ -54,6 +54,12 @@ class ConnectionManager:
 
         # 连接状态管理
         self._connection_state = ConnectionState.IDLE
+        
+        # 初始化协议状态到连接状态的映射表
+        self._protocol_to_connection_map = {
+            TtydProtocolState.PROTOCOL_READY: ConnectionState.CONNECTED,
+            TtydProtocolState.PROTOCOL_ERROR: ConnectionState.FAILED
+        }
 
         # WebSocket客户端
         self._client = TtydWebSocketClient(
@@ -106,31 +112,27 @@ class ConnectionManager:
         """处理协议层状态变化"""
         logger.debug(f"收到协议状态变化: {protocol_state.value}")
         
-        # 将协议状态映射为连接管理状态
-        if protocol_state == TtydProtocolState.CONNECTING:
-            # 协议层开始连接时，连接管理层可能已经是 CONNECTING 状态
-            pass
-        elif protocol_state == TtydProtocolState.AUTHENTICATING:
-            # 认证阶段仍然是连接中
-            if self._connection_state == ConnectionState.CONNECTING:
-                pass  # 保持连接中状态
-        elif protocol_state == TtydProtocolState.PROTOCOL_READY:
-            # 协议就绪 = 连接成功
-            if self._connection_state in [ConnectionState.CONNECTING, ConnectionState.RECONNECTING]:
-                self._set_connection_state(ConnectionState.CONNECTED)
-        elif protocol_state == TtydProtocolState.PROTOCOL_ERROR:
-            # 协议错误 = 连接失败
-            if self._connection_state == ConnectionState.RECONNECTING:
-                self._set_connection_state(ConnectionState.FAILED)
-            else:
-                self._set_connection_state(ConnectionState.FAILED)
-        elif protocol_state == TtydProtocolState.DISCONNECTED:
-            # 协议断开 = 连接断开
+        # 协议断开状态的特殊处理（区分正常断开和意外断开）
+        if protocol_state == TtydProtocolState.DISCONNECTED:
             if self._connection_state == ConnectionState.DISCONNECTING:
-                self._set_connection_state(ConnectionState.DISCONNECTED)
+                logger.info("连接正常断开")
             else:
-                # 意外断开
-                self._set_connection_state(ConnectionState.DISCONNECTED)
+                logger.warning(f"连接意外断开，当前状态: {self._connection_state.value}")
+            self._set_connection_state(ConnectionState.DISCONNECTED)
+            return
+            
+        # 对于连接和认证阶段，保持当前状态
+        if protocol_state in [TtydProtocolState.CONNECTING, TtydProtocolState.AUTHENTICATING]:
+            logger.debug(f"协议层{protocol_state.value}，保持连接层状态: {self._connection_state.value}")
+            return
+            
+        # 使用映射表处理其他状态
+        if protocol_state in self._protocol_to_connection_map:
+            new_state = self._protocol_to_connection_map[protocol_state]
+            logger.debug(f"协议层{protocol_state.value}，连接层状态从{self._connection_state.value}变为{new_state.value}")
+            self._set_connection_state(new_state)
+        else:
+            logger.warning(f"未处理的协议状态: {protocol_state.value}")
 
     @property
     def is_connected(self) -> bool:

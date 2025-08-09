@@ -13,8 +13,9 @@ from enum import Enum
 from dataclasses import dataclass
 
 from .connection_manager import ConnectionManager
-from .command_executor import CommandExecutor, CommandResult, TerminalType
+from .command_executor import CommandExecutor, CommandResult
 from .output_processor import OutputProcessor
+from .data_structures import StreamChunk, ChunkType, TerminalType
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +73,8 @@ class TerminalAPIClient:
             terminal_type=terminal_type
         )
         
-        # 根据终端类型创建对应的 OutputProcessor
-        from .output_processor import TerminalType as ProcessorTerminalType
-        processor_type = ProcessorTerminalType.QCLI if terminal_type == TerminalType.QCLI else ProcessorTerminalType.GENERIC
-        
-        self._output_processor = OutputProcessor(
-            terminal_type=processor_type,
-            enable_formatting=format_output
-        )
+        # 创建对应的 OutputProcessor（使用统一的 TerminalType）
+        self._output_processor = OutputProcessor(terminal_type=terminal_type)
         
         # 将 OutputProcessor 注入到 CommandExecutor
         self._command_executor.set_output_processor(self._output_processor)
@@ -151,7 +146,7 @@ class TerminalAPIClient:
                 logger.info("连接恢复，终端状态从不可用恢复为空闲")
             
         elif conn_state in [ConnectionState.FAILED, ConnectionState.DISCONNECTED]:
-            # 连接失败或断开
+            # 连接失败或断开 - 避免覆盖ERROR状态
             if self.state not in [TerminalBusinessState.ERROR, TerminalBusinessState.UNAVAILABLE]:
                 self._set_state(TerminalBusinessState.UNAVAILABLE)
                 logger.info(f"连接断开，终端状态设置为不可用")
@@ -261,161 +256,101 @@ class TerminalAPIClient:
     
     async def execute_command_stream(self, command: str, silence_timeout: float = 30.0) -> AsyncIterator[Dict[str, Any]]:
         """
-        执行命令并返回流式输出（异步迭代器）
+        执行命令并返回流式输出（异步迭代器）- 基于统一数据流架构
         
         Args:
             command: 要执行的命令
             silence_timeout: 静默超时时间（秒）- 只有完全无响应时才超时
             
         Yields:
-            Dict: 每个流式输出块，包含 content, state, metadata 等信息
+            Dict: 每个流式输出块，统一的API格式
         """
         # 检查是否可以执行命令
         if not self.can_execute_command:
             error_msg = f"无法执行命令: 连接状态={self.is_connected}, 终端状态={self.state.value}"
             logger.error(error_msg)
-            yield {
-                "content": "",
-                "state": "error",
-                "is_content": False,
-                "metadata": {"error": error_msg},
-                "timestamp": time.time()
-            }
+            
+            # 使用统一的错误格式
+            error_chunk = StreamChunk.create_error(error_msg, self.terminal_type.value, "command_execution_error")
+            yield error_chunk.to_api_format()
             return
         
         # 设置忙碌状态
         self._set_state(TerminalBusinessState.BUSY)
         
         try:
-            # 创建队列来收集流式输出
-            output_queue = asyncio.Queue()
+            # 使用简化的流式处理 - 基于 StreamChunk 回调
+            stream_chunks = []
             command_complete = asyncio.Event()
+            execution_error = None
             
-            def stream_handler(raw_chunk: str):
-                """处理流式输出块 - 优化版本"""
+            def stream_chunk_handler(chunk: StreamChunk):
+                """StreamChunk 回调处理器 - 统一接口"""
                 try:
-                    # 根据终端类型处理输出
-                    if self.terminal_type == TerminalType.QCLI:
-                        # Q CLI 特殊处理：使用状态检测
-                        qcli_chunk = self._output_processor.process_qcli_chunk(raw_chunk)
-                        
-                        # 生成优化的流式块格式
-                        stream_chunk = {
-                            "content": qcli_chunk.content,
-                            "state": qcli_chunk.state.value,
-                            "is_content": qcli_chunk.is_content,
-                            "metadata": self._build_qcli_metadata(qcli_chunk, raw_chunk),
-                            "timestamp": time.time()
-                        }
-                    else:
-                        # 通用终端处理
-                        processed_content = self._output_processor.process_stream_output(
-                            raw_output=raw_chunk,
-                            command=command
-                        )
-                        
-                        stream_chunk = {
-                            "content": processed_content,
-                            "terminal_type": self.terminal_type.value,
-                            "is_content": bool(processed_content.strip()),
-                            "metadata": {"raw_length": len(raw_chunk)},
-                            "timestamp": time.time()
-                        }
-                    
-                    # 放入队列
-                    output_queue.put_nowait(stream_chunk)
-                    
+                    # 直接收集 StreamChunk，稍后转换为 API 格式
+                    stream_chunks.append(chunk)
                 except Exception as e:
-                    logger.error(f"处理流式输出时出错: {e}")
-                    # 发送错误块
-                    error_chunk = {
-                        "content": "",
-                        "state": "error",
-                        "is_content": False,
-                        "metadata": {"error": str(e)},
-                        "timestamp": time.time()
-                    }
-                    output_queue.put_nowait(error_chunk)
+                    logger.error(f"StreamChunk 处理出错: {e}")
+                    # 创建错误 StreamChunk
+                    error_chunk = StreamChunk.create_error(str(e), self.terminal_type.value, "stream_processing_error")
+                    stream_chunks.append(error_chunk)
             
-            # 设置流式回调
-            self._command_executor.set_stream_callback(stream_handler)
+            # 设置 StreamChunk 回调
+            self._command_executor.set_stream_callback(stream_chunk_handler)
             
             # 启动命令执行任务
             async def execute_task():
+                nonlocal execution_error
                 try:
                     result = await self._command_executor.execute_command(command, silence_timeout)
-                    # 命令完成，发送完成信号
-                    output_queue.put_nowait({"_command_complete": True, "result": result})
+                    
+                    # 创建完成 StreamChunk
+                    complete_chunk = StreamChunk(
+                        content="",
+                        type=ChunkType.COMPLETE,
+                        metadata={
+                            "execution_time": result.execution_time,
+                            "command_success": result.success,
+                            "terminal_type": self.terminal_type.value
+                        },
+                        timestamp=time.time()
+                    )
+                    stream_chunks.append(complete_chunk)
+                    
                 except Exception as e:
-                    output_queue.put_nowait({"_command_error": True, "error": str(e)})
+                    execution_error = e
+                    error_chunk = StreamChunk.create_error(str(e), self.terminal_type.value, "command_execution_error")
+                    stream_chunks.append(error_chunk)
                 finally:
                     command_complete.set()
             
             # 启动执行任务
             execute_task_handle = asyncio.create_task(execute_task())
             
-            # 流式输出处理循环
-            while not command_complete.is_set() or not output_queue.empty():
-                try:
-                    # 等待输出或超时
-                    chunk = await asyncio.wait_for(output_queue.get(), timeout=1.0)
+            # 流式输出处理 - 简化的轮询机制
+            last_processed = 0
+            
+            while not command_complete.is_set() or last_processed < len(stream_chunks):
+                # 处理新的 StreamChunk
+                while last_processed < len(stream_chunks):
+                    chunk = stream_chunks[last_processed]
+                    last_processed += 1
                     
-                    # 检查是否是控制消息
-                    if isinstance(chunk, dict) and "_command_complete" in chunk:
-                        # 发送最终完成块
-                        final_chunk = {
-                            "content": "",
-                            "state": "complete",
-                            "is_content": False,
-                            "metadata": {"final": True},
-                            "timestamp": time.time()
-                        }
-                        yield final_chunk
-                        break
-                    elif isinstance(chunk, dict) and "_command_error" in chunk:
-                        # 发送错误块
-                        error_chunk = {
-                            "content": "",
-                            "state": "error", 
-                            "is_content": False,
-                            "metadata": {"error": chunk["error"], "final": True},
-                            "timestamp": time.time()
-                        }
-                        yield error_chunk
-                        break
-                    else:
-                        # 正常的流式输出块
-                        yield chunk
-                        
-                except asyncio.TimeoutError:
-                    # 超时检查，但继续等待
-                    continue
+                    # 转换为 API 格式并输出
+                    api_chunk = chunk.to_api_format()
+                    yield api_chunk
+                    
+                    # 如果是完成或错误块，结束流式输出
+                    if chunk.type in [ChunkType.COMPLETE, ChunkType.ERROR]:
+                        return
+                
+                # 如果命令还在执行，短暂等待
+                if not command_complete.is_set():
+                    await asyncio.sleep(0.1)
                     
         finally:
+            # 恢复空闲状态
             self._set_state(TerminalBusinessState.IDLE)
-    
-    def _build_qcli_metadata(self, qcli_chunk, raw_chunk: str) -> Dict[str, Any]:
-        """构建 Q CLI 流式输出的元数据"""
-        metadata = {
-            "raw_length": len(raw_chunk),
-            "content_length": len(qcli_chunk.content),
-        }
-        
-        # 合并 chunk 自带的元数据
-        if qcli_chunk.metadata:
-            metadata.update(qcli_chunk.metadata)
-        
-        # 添加状态特定的元数据
-        if qcli_chunk.state.value == "thinking":
-            metadata["status_indicator"] = "🤔"
-        elif qcli_chunk.state.value == "tool_use":
-            metadata["status_indicator"] = "🔧"
-        elif qcli_chunk.state.value == "streaming":
-            metadata["status_indicator"] = "💬"
-        elif qcli_chunk.state.value == "complete":
-            metadata["status_indicator"] = "✅"
-        
-        return metadata
     
     # 异步上下文管理器支持
     async def __aenter__(self):

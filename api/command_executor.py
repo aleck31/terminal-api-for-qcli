@@ -9,9 +9,9 @@ import logging
 import time
 from typing import Optional, Callable
 from dataclasses import dataclass
-from enum import Enum
 
 from .connection_manager import ConnectionManager
+from .data_structures import TerminalType
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,6 @@ class ExecutionConstants:
     """执行相关常量"""
     DEFAULT_TIMEOUT = 30.0
     QCLI_MAX_TIMEOUT = 120.0
-
-class TerminalType(Enum):
-    """终端类型"""
-    GENERIC = "generic"
-    QCLI = "qcli"
 
 @dataclass
 class CommandResult:
@@ -96,54 +91,68 @@ class CommandExecutor:
         """设置输出处理器"""
         self.output_processor = output_processor
     
-    def set_stream_callback(self, callback: Callable[[str], None]):
-        """设置流式输出回调"""
+    def set_stream_callback(self, callback: Callable):
+        """设置流式输出回调 - 现在接收 StreamChunk 对象"""
         self.stream_callback = callback
     
-    def _handle_raw_message(self, raw_output: str):
-        """处理原始消息"""
-        if not self.current_execution or not raw_output:
+    def _handle_raw_message(self, raw_message: str):
+        """处理原始消息 - 基于统一数据流架构"""
+        if not self.current_execution or not raw_message:
             return
         
         try:
-            # 更新活跃性时间戳（收到任何消息都算活跃）
+            # 1. 更新活跃性时间戳（收到任何消息都算活跃）
             self.current_execution.update_activity()
             
-            # 保存最后一个消息块用于命令完成检测
-            self.current_execution.last_chunk = raw_output
+            # 2. 保存最后一个消息块用于命令完成检测
+            self.current_execution.last_chunk = raw_message
             
-            # 检测命令完成（使用当前消息块）
-            if self._is_command_complete(raw_output):
+            # 3. 检测命令完成（基于原始数据）
+            if self._is_command_complete(raw_message):
                 self.current_execution.complete_event.set()
             
-            # 如果有输出处理器，处理数据并调用流式回调
+            # 4. 使用新的统一数据处理接口
             if self.output_processor:
-                processed_output = self.output_processor.process_stream_output(
-                    raw_output=raw_output,
-                    command=self.current_execution.command
+                # 调用新的统一处理接口，传递正确的终端类型
+                stream_chunk = self.output_processor.process_raw_message(
+                    raw_message=raw_message,
+                    command=self.current_execution.command,
+                    terminal_type=self.terminal_type  # 传递 CommandExecutor 的终端类型
                 )
                 
-                # 调用用户设置的流式回调
-                if processed_output and self.stream_callback:
+                # 5. 调用 StreamChunk 回调
+                if stream_chunk and self.stream_callback:
                     try:
-                        self.stream_callback(processed_output)
+                        self.stream_callback(stream_chunk)
                     except Exception as e:
-                        logger.error(f"流式输出回调出错: {e}")
+                        logger.error(f"StreamChunk 回调出错: {e}")
                         
         except Exception as e:
             logger.error(f"处理原始消息时出错: {e}")
+            # 发送错误 StreamChunk
+            if self.output_processor and self.stream_callback:
+                try:
+                    from .data_structures import StreamChunk
+                    error_chunk = StreamChunk.create_error(
+                        str(e), 
+                        self.terminal_type.value,
+                        "message_processing_error"
+                    )
+                    self.stream_callback(error_chunk)
+                except Exception as callback_error:
+                    logger.error(f"发送错误 StreamChunk 失败: {callback_error}")
     
-    def _is_command_complete(self, raw_output: str) -> bool:
-        """命令完成检测"""
-        if not raw_output or not self.current_execution:
+    def _is_command_complete(self, raw_message: str) -> bool:
+        """命令完成检测 - 保持基于原始数据的检测逻辑"""
+        if not raw_message or not self.current_execution:
             return False
         
         if self.terminal_type == TerminalType.QCLI:
-            return self._is_qcli_command_complete(raw_output)
+            return self._is_qcli_command_complete(raw_message)
         else:
-            return self._is_generic_command_complete(raw_output)
+            return self._is_generic_command_complete(raw_message)
     
-    def _is_qcli_command_complete(self, raw_output: str) -> bool:
+    def _is_qcli_command_complete(self, raw_message: str) -> bool:
         """Q CLI 命令完成检测"""
         # Q CLI 完成标志：新提示符出现
         completion_indicators = [
@@ -154,10 +163,9 @@ class CommandExecutor:
         ]
         
         for indicator in completion_indicators:
-            if indicator in raw_output:
+            if indicator in raw_message:
                 logger.debug("检测到 Q CLI 命令完成：新提示符出现")
                 return True
-            return True
         
         # 超时保护
         if self.current_execution.execution_time > ExecutionConstants.QCLI_MAX_TIMEOUT:
@@ -166,7 +174,7 @@ class CommandExecutor:
         
         return False
     
-    def _is_generic_command_complete(self, raw_output: str) -> bool:
+    def _is_generic_command_complete(self, raw_message: str) -> bool:
         """通用终端命令完成检测（基于 OSC 697 序列）"""
         # 检查是否包含命令完成的 OSC 序列
         completion_indicators = [
@@ -176,7 +184,7 @@ class CommandExecutor:
         ]
         
         for indicator in completion_indicators:
-            if indicator in raw_output:
+            if indicator in raw_message:
                 logger.debug(f"检测到通用终端命令完成，OSC 标志: {indicator}")
                 return True
         

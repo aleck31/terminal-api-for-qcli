@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-简单的测试运行器
-直接运行各个测试脚本
+测试运行器
+运行各个测试脚本，包括统一数据流架构测试
 """
 
 import subprocess
@@ -19,7 +19,7 @@ def run_test_script(script_path, description):
         # 使用 uv run 运行测试脚本
         result = subprocess.run([
             "uv", "run", "python", str(script_path)
-        ], cwd=Path(__file__).parent, timeout=120)
+        ], cwd=Path(__file__).parent.parent, timeout=120)
         
         if result.returncode == 0:
             print(f"✅ {description} - 通过")
@@ -37,24 +37,58 @@ def run_test_script(script_path, description):
 
 def main():
     """主函数"""
-    print("🧪 开始运行简单测试套件")
+    print("🧪 开始运行测试套件")
     
-    # 测试脚本列表
-    tests = [
-        ("test_terminal_api.py", "终端API基础测试"),
-        ("test_formatted_output.py", "格式化输出测试"),
-        ("test_ttyd_service.py", "服务脚本测试"),
+    # 基础测试脚本列表
+    basic_tests = [
+        ("tests/test_formatted_output.py", "格式化输出测试"),
+        ("tests/test_ttyd_service.py", "服务脚本测试"),
     ]
     
-    # 检查是否运行集成测试
-    if len(sys.argv) > 1 and sys.argv[1] == "--integration":
-        tests.append(("tests/test_integration.py", "集成测试（需要ttyd服务）"))
+    # 统一数据流架构测试
+    unified_tests = [
+        ("tests/test_data_structures.py", "统一数据结构测试"),
+        ("tests/test_output_processor.py", "输出处理器测试"),
+        ("tests/test_command_executor.py", "命令执行器测试"),
+        ("tests/test_terminal_api_client.py", "终端API客户端测试"),
+    ]
+    
+    # 集成测试（需要服务运行）
+    integration_tests = [
+        ("tests/test_connect_state.py", "连接状态测试"),
+        ("tests/test_state_mapping.py", "状态映射测试"),
+        ("tests/test_event_driven.py", "事件驱动测试"),
+        ("tests/test_gradio_webui.py", "Gradio WebUI测试"),
+    ]
+    
+    # 根据参数决定运行哪些测试
+    tests_to_run = []
+    
+    if len(sys.argv) > 1:
+        if "--unified" in sys.argv:
+            tests_to_run.extend(unified_tests)
+            print("🎯 运行统一数据流架构测试")
+        elif "--integration" in sys.argv:
+            tests_to_run.extend(integration_tests)
+            print("🔗 运行集成测试（需要ttyd服务）")
+        elif "--all" in sys.argv:
+            tests_to_run.extend(basic_tests)
+            tests_to_run.extend(unified_tests)
+            tests_to_run.extend(integration_tests)
+            print("🚀 运行所有测试")
+        else:
+            print("❓ 未知参数，运行基础测试")
+            tests_to_run.extend(basic_tests)
+    else:
+        # 默认运行统一数据流架构测试
+        tests_to_run.extend(unified_tests)
+        print("🎯 默认运行统一数据流架构测试")
     
     # 运行测试
     passed = 0
-    total = len(tests)
+    total = len(tests_to_run)
     
-    for script, description in tests:
+    for script, description in tests_to_run:
         if run_test_script(script, description):
             passed += 1
     
@@ -65,9 +99,15 @@ def main():
     
     if passed == total:
         print("🎉 所有测试通过！")
-        if "--integration" not in sys.argv:
-            print("\n💡 提示: 运行 'python run_tests.py --integration' 来测试完整功能")
-            print("   （需要先启动ttyd服务: ./ttyd/ttyd-service.sh start）")
+        
+        # 提示其他测试选项
+        if "--unified" in sys.argv or len(sys.argv) == 1:
+            print("\n💡 其他测试选项:")
+            print("   --integration  运行集成测试（需要先启动ttyd服务）")
+            print("   --all         运行所有测试")
+        elif "--integration" in sys.argv:
+            print("\n💡 提示: 运行 'python tests/run_tests.py --unified' 来测试统一数据流架构")
+        
         return True
     else:
         print("❌ 部分测试失败")

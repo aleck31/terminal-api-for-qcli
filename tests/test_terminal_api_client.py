@@ -56,12 +56,12 @@ class MockCommandExecutor:
     """模拟命令执行器"""
     
     def __init__(self):
-        self.output_processor = None
+        self.message_processor = None
         self.stream_callback = None
         self._handle_raw_message = Mock()
     
     def set_output_processor(self, processor):
-        self.output_processor = processor
+        self.message_processor = processor
     
     def set_stream_callback(self, callback):
         self.stream_callback = callback

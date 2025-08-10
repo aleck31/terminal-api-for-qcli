@@ -13,7 +13,7 @@ import time
 from unittest.mock import Mock, AsyncMock
 
 from api.command_executor import CommandExecutor
-from api.output_processor import OutputProcessor
+from api.message_processor import MessageProcessor
 from api.data_structures import StreamChunk, ChunkType, TerminalType
 
 
@@ -36,11 +36,11 @@ def test_stream_chunk_callback():
     
     # 创建模拟组件
     mock_conn_manager = MockConnectionManager()
-    output_processor = OutputProcessor(TerminalType.GENERIC)
+    message_processor = MessageProcessor(TerminalType.GENERIC)
     
     # 创建 CommandExecutor
     executor = CommandExecutor(mock_conn_manager, TerminalType.GENERIC)
-    executor.set_output_processor(output_processor)
+    executor.set_output_processor(message_processor)
     
     # 创建执行上下文（重要！）
     from api.command_executor import CommandExecution
@@ -89,14 +89,14 @@ def test_qcli_message_processing():
     # 创建 Q CLI 类型的组件 - 确保类型一致！
     mock_conn_manager = MockConnectionManager()
     
-    # 重要：CommandExecutor 和 OutputProcessor 必须使用相同的终端类型
+    # 重要：CommandExecutor 和 MessageProcessor 必须使用相同的终端类型
     executor = CommandExecutor(mock_conn_manager, TerminalType.QCLI)
-    output_processor = OutputProcessor(TerminalType.QCLI)  # 与 CommandExecutor 类型一致
+    message_processor = MessageProcessor(TerminalType.QCLI)  # 与 CommandExecutor 类型一致
     
-    executor.set_output_processor(output_processor)
+    executor.set_output_processor(message_processor)
     
     print(f"CommandExecutor 类型: {executor.terminal_type}")
-    print(f"OutputProcessor 类型: {output_processor.terminal_type}")
+    print(f"MessageProcessor 类型: {message_processor.terminal_type}")
     
     # 创建执行上下文（重要！）
     from api.command_executor import CommandExecution
@@ -145,13 +145,13 @@ def test_error_handling():
     
     mock_conn_manager = MockConnectionManager()
     
-    # 创建一个会出错的 OutputProcessor
-    class ErrorOutputProcessor:
+    # 创建一个会出错的 MessageProcessor
+    class ErrorMessageProcessor:
         def process_raw_message(self, raw_message, command, terminal_type=None):
             raise Exception("模拟处理错误")
     
     executor = CommandExecutor(mock_conn_manager, TerminalType.GENERIC)
-    executor.set_output_processor(ErrorOutputProcessor())
+    executor.set_output_processor(ErrorMessageProcessor())
     
     # 创建执行上下文（重要！）
     from api.command_executor import CommandExecution
@@ -185,10 +185,10 @@ def test_activity_and_completion_detection():
     print("\n=== 测试活跃性检测和完成检测 ===")
     
     mock_conn_manager = MockConnectionManager()
-    output_processor = OutputProcessor(TerminalType.GENERIC)
+    message_processor = MessageProcessor(TerminalType.GENERIC)
     
     executor = CommandExecutor(mock_conn_manager, TerminalType.GENERIC)
-    executor.set_output_processor(output_processor)
+    executor.set_output_processor(message_processor)
     
     # 创建执行上下文
     from api.command_executor import CommandExecution
@@ -217,10 +217,10 @@ async def test_full_command_execution():
     print("\n=== 测试完整命令执行流程 ===")
     
     mock_conn_manager = MockConnectionManager()
-    output_processor = OutputProcessor(TerminalType.GENERIC)
+    message_processor = MessageProcessor(TerminalType.GENERIC)
     
     executor = CommandExecutor(mock_conn_manager, TerminalType.GENERIC)
-    executor.set_output_processor(output_processor)
+    executor.set_output_processor(message_processor)
     
     # 收集执行过程中的所有 StreamChunk
     execution_chunks = []

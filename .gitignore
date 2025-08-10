@@ -45,6 +45,8 @@ env/
 .env
 
 # Project specific
+debug
+.session
 logs/*
 pids/*
 tmp/

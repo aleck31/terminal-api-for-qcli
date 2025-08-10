@@ -96,7 +96,7 @@ class TerminalChatBot:
                 if session_id in self.user_loops:
                     loop = self.user_loops[session_id]
                     if not loop.is_closed():
-                        loop.run_until_complete(client.disconnect())
+                        loop.run_until_complete(client.shutdown())
                         loop.close()
                     del self.user_loops[session_id]
                 logger.info(f"会话 {session_id} 连接已断开")
@@ -158,7 +158,7 @@ class TerminalChatBot:
                         try:
                             # 确保连接
                             if not client.is_connected:
-                                await client.connect()
+                                await client.initialize()
                             
                             if not client.is_connected:
                                 stream_queue.put({"error": "❌ 无法连接到 Q CLI ttyd 服务，请检查服务是否启动"})

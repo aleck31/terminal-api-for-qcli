@@ -9,7 +9,6 @@ import logging
 import time
 from typing import Optional, Callable
 from dataclasses import dataclass
-
 from .connection_manager import ConnectionManager
 from .data_structures import TerminalType
 
@@ -38,6 +37,27 @@ class CommandResult:
             execution_time=execution_time,
             error=error_msg
         )
+    
+    @classmethod
+    def create_success_result(cls, command: str, execution_time: float) -> 'CommandResult':
+        """创建成功结果"""
+        return cls(
+            command=command,
+            success=True,
+            execution_time=execution_time,
+            error=None
+        )
+    
+    @classmethod
+    def create_timeout_result(cls, command: str, execution_time: float, silence_duration: float) -> 'CommandResult':
+        """创建超时结果"""
+        error_msg = f"命令执行静默超时 (静默 {silence_duration:.1f}s)"
+        return cls(
+            command=command,
+            success=False,
+            execution_time=execution_time,
+            error=error_msg
+        )
 
 class CommandExecution:
     """命令执行上下文"""
@@ -49,9 +69,6 @@ class CommandExecution:
         
         # 活跃性检测
         self.last_message_time = time.time()  # 最后收到消息的时间
-        
-        # 保存最后一个消息块（用于命令完成检测）
-        self.last_chunk = ""
         
     @property
     def execution_time(self) -> float:
@@ -84,19 +101,19 @@ class CommandExecutor:
         self.current_execution: Optional[CommandExecution] = None
         
         # 输出处理器（由外部注入）
-        self.output_processor = None
+        self.message_processor = None
         self.stream_callback: Optional[Callable[[str], None]] = None
     
-    def set_output_processor(self, output_processor):
+    def set_output_processor(self, message_processor):
         """设置输出处理器"""
-        self.output_processor = output_processor
+        self.message_processor = message_processor
     
     def set_stream_callback(self, callback: Callable):
         """设置流式输出回调 - 现在接收 StreamChunk 对象"""
         self.stream_callback = callback
     
     def _handle_raw_message(self, raw_message: str):
-        """处理原始消息 - 基于统一数据流架构"""
+        """处理原始消息 - 利用MessageProcessor的完成检测结果"""
         if not self.current_execution or not raw_message:
             return
         
@@ -104,33 +121,29 @@ class CommandExecutor:
             # 1. 更新活跃性时间戳（收到任何消息都算活跃）
             self.current_execution.update_activity()
             
-            # 2. 保存最后一个消息块用于命令完成检测
-            self.current_execution.last_chunk = raw_message
+            # 2. 使用MessageProcessor处理消息
+            stream_chunk = self.message_processor.process_raw_message(
+                raw_message=raw_message,
+                command=self.current_execution.command,
+                terminal_type=self.terminal_type
+            )
             
-            # 3. 检测命令完成（基于原始数据）
-            if self._is_command_complete(raw_message):
+            # 3. 检查是否完成（利用MessageProcessor的检测结果）
+            if stream_chunk and stream_chunk.type.value == "complete":
+                logger.debug(f"检测到命令完成：{self.terminal_type.value}")
                 self.current_execution.complete_event.set()
             
-            # 4. 使用新的统一数据处理接口
-            if self.output_processor:
-                # 调用新的统一处理接口，传递正确的终端类型
-                stream_chunk = self.output_processor.process_raw_message(
-                    raw_message=raw_message,
-                    command=self.current_execution.command,
-                    terminal_type=self.terminal_type  # 传递 CommandExecutor 的终端类型
-                )
-                
-                # 5. 调用 StreamChunk 回调
-                if stream_chunk and self.stream_callback:
-                    try:
-                        self.stream_callback(stream_chunk)
-                    except Exception as e:
-                        logger.error(f"StreamChunk 回调出错: {e}")
+            # 4. 调用StreamChunk回调
+            if stream_chunk and self.stream_callback:
+                try:
+                    self.stream_callback(stream_chunk)
+                except Exception as e:
+                    logger.error(f"StreamChunk 回调出错: {e}")
                         
         except Exception as e:
             logger.error(f"处理原始消息时出错: {e}")
             # 发送错误 StreamChunk
-            if self.output_processor and self.stream_callback:
+            if self.stream_callback:
                 try:
                     from .data_structures import StreamChunk
                     error_chunk = StreamChunk.create_error(
@@ -141,52 +154,6 @@ class CommandExecutor:
                     self.stream_callback(error_chunk)
                 except Exception as callback_error:
                     logger.error(f"发送错误 StreamChunk 失败: {callback_error}")
-    
-    def _is_command_complete(self, raw_message: str) -> bool:
-        """命令完成检测 - 保持基于原始数据的检测逻辑"""
-        if not raw_message or not self.current_execution:
-            return False
-        
-        if self.terminal_type == TerminalType.QCLI:
-            return self._is_qcli_command_complete(raw_message)
-        else:
-            return self._is_generic_command_complete(raw_message)
-    
-    def _is_qcli_command_complete(self, raw_message: str) -> bool:
-        """Q CLI 命令完成检测 - 使用 QcliOutputFormatter 的统一检测"""
-        if not hasattr(self, '_qcli_formatter'):
-            from api.utils.qcli_formatter import QcliOutputFormatter
-            self._qcli_formatter = QcliOutputFormatter()
-        
-        # 使用 QcliOutputFormatter 的完成检测
-        _, is_complete = self._qcli_formatter.clean_and_detect_completion(raw_message)
-        
-        if is_complete:
-            logger.debug("检测到 Q CLI 命令完成：新提示符出现")
-            return True
-        
-        # 超时保护
-        if self.current_execution.execution_time > ExecutionConstants.QCLI_MAX_TIMEOUT:
-            logger.warning("Q CLI 命令执行时间过长，强制完成")
-            return True
-        
-        return False
-    
-    def _is_generic_command_complete(self, raw_message: str) -> bool:
-        """通用终端命令完成检测（基于 OSC 697 序列）"""
-        # 检查是否包含命令完成的 OSC 序列
-        completion_indicators = [
-            '\x1b]697;NewCmd=',      # 新命令开始
-            '\x1b]697;EndPrompt',    # 提示符结束
-            '\x1b]697;StartPrompt',  # 新提示符开始
-        ]
-        
-        for indicator in completion_indicators:
-            if indicator in raw_message:
-                logger.debug(f"检测到通用终端命令完成，OSC 标志: {indicator}")
-                return True
-        
-        return False
     
     async def execute_command(self, command: str, silence_timeout: float = 30.0) -> CommandResult:
         """
@@ -232,31 +199,25 @@ class CommandExecutor:
                     # 否则继续等待（Q CLI 仍在工作）
             
             # 生成结果
-            return self._create_command_result()
+            if not self.current_execution:
+                return CommandResult.create_error_result("", "无执行上下文")
+
+            command = self.current_execution.command
+            execution_time = self.current_execution.execution_time
+            
+            if self.current_execution.timeout_occurred:
+                # 超时结果
+                silence_duration = self.current_execution.get_silence_duration()
+                return CommandResult.create_timeout_result(command, execution_time, silence_duration)
+            else:
+                # 成功结果
+                return CommandResult.create_success_result(command, execution_time)
             
         except Exception as e:
             logger.error(f"执行命令时出错: {e}")
             return CommandResult.create_error_result(
-                command, str(e), self.current_execution.execution_time
+                command, str(e), self.current_execution.execution_time if self.current_execution else 0.0
             )
         finally:
             # 清理执行状态
             self.current_execution = None
-    
-    def _create_command_result(self) -> CommandResult:
-        """创建命令执行结果"""
-        if not self.current_execution:
-            return CommandResult.create_error_result("", "无执行上下文")
-
-        success = not self.current_execution.timeout_occurred
-        error = None
-        if self.current_execution.timeout_occurred:
-            silence_duration = self.current_execution.get_silence_duration()
-            error = f"命令执行静默超时 (静默 {silence_duration:.1f}s)"
-        
-        return CommandResult(
-            command=self.current_execution.command,
-            success=success,
-            execution_time=self.current_execution.execution_time,
-            error=error
-        )

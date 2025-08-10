@@ -43,7 +43,7 @@ class InteractiveTerminalDemo:
         
         if success:
             print("✅ 连接成功！")
-            print("💡 提示：输入 'help' 查看帮助，输入 'quit' 或 'exit' 退出")
+            print("💡 提示：输入 '/help' 查看帮助，输入 '/quit' 或 '/exit' 退出")
             return True
         else:
             print("❌ 连接失败，请检查 ttyd 服务是否启动")
@@ -58,8 +58,8 @@ class InteractiveTerminalDemo:
 📝 使用方法:
    - 直接输入任何 bash 命令，如: pwd, ls -la, echo hello
    - 输出将实时流式显示
-   - 输入 'help' 显示此帮助
-   - 输入 'quit' 或 'exit' 退出程序
+   - 输入 '/help' 显示此帮助
+   - 输入 '/quit' 或 '/exit' 退出程序
    - 按 Ctrl+C 也可以退出
 
 🌟 示例命令:
@@ -142,9 +142,9 @@ class InteractiveTerminalDemo:
                     continue
                 
                 # 处理特殊命令
-                if command.lower() in ['quit', 'exit', 'q']:
+                if command.lower() in ['/quit', '/exit', 'exit']:
                     break
-                elif command.lower() in ['help', 'h', '?']:
+                elif command.lower() in ['/help', '/h', '/?']:
                     self.show_help()
                     continue
                 elif command.lower() == 'clear':

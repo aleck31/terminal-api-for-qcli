@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-测试重构后的 OutputProcessor
+测试重构后的 MessageProcessor
 验证统一数据流架构的核心处理逻辑
 """
 
@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from api.output_processor import OutputProcessor, TerminalType
+from api.message_processor import MessageProcessor, TerminalType
 from api.data_structures import ChunkType, is_user_visible_content
 
 
@@ -16,7 +16,7 @@ def test_generic_terminal_processing():
     """测试通用终端处理"""
     print("=== 测试通用终端处理 ===")
     
-    processor = OutputProcessor(TerminalType.GENERIC)
+    processor = MessageProcessor(TerminalType.GENERIC)
     
     # 测试简单内容
     raw_message = "pwd\r\n/tmp/ttyd\r\n"
@@ -44,7 +44,7 @@ def test_qcli_terminal_processing():
     """测试 Q CLI 终端处理"""
     print("\n=== 测试 Q CLI 终端处理 ===")
     
-    processor = OutputProcessor(TerminalType.QCLI)
+    processor = MessageProcessor(TerminalType.QCLI)
     
     # 测试思考状态 - 使用正确的旋转指示符格式
     thinking_message = "⠋ Thinking..."
@@ -96,7 +96,7 @@ def test_error_handling():
     """测试错误处理"""
     print("\n=== 测试错误处理 ===")
     
-    processor = OutputProcessor(TerminalType.GENERIC)
+    processor = MessageProcessor(TerminalType.GENERIC)
     
     # 模拟处理错误（通过传入无效数据）
     # 注意：这个测试可能需要根据实际的错误情况调整
@@ -118,8 +118,8 @@ def test_unified_api_format():
     print("\n=== 测试统一API格式 ===")
     
     # 创建不同类型的处理器
-    generic_processor = OutputProcessor(TerminalType.GENERIC)
-    qcli_processor = OutputProcessor(TerminalType.QCLI)
+    generic_processor = MessageProcessor(TerminalType.GENERIC)
+    qcli_processor = MessageProcessor(TerminalType.QCLI)
     
     # 处理不同类型的消息
     generic_chunk = generic_processor.process_raw_message("Hello World", "echo")
@@ -150,7 +150,7 @@ def test_utility_functions():
     """测试工具函数"""
     print("\n=== 测试工具函数 ===")
     
-    processor = OutputProcessor(TerminalType.GENERIC)
+    processor = MessageProcessor(TerminalType.GENERIC)
     
     # 创建不同类型的数据块
     content_chunk = processor.process_raw_message("test content", "test")
@@ -172,7 +172,7 @@ def test_real_world_scenario():
     print("\n=== 测试真实场景 ===")
     
     # 模拟一个完整的 Q CLI 交互流程
-    qcli_processor = OutputProcessor(TerminalType.QCLI)
+    qcli_processor = MessageProcessor(TerminalType.QCLI)
     
     # 模拟消息序列 - 使用正确的格式
     messages = [
@@ -207,7 +207,7 @@ def test_real_world_scenario():
 
 def main():
     """主测试函数"""
-    print("开始测试重构后的 OutputProcessor...\n")
+    print("开始测试重构后的 MessageProcessor...\n")
     
     test_generic_terminal_processing()
     test_qcli_terminal_processing()
@@ -216,7 +216,7 @@ def main():
     test_utility_functions()
     test_real_world_scenario()
     
-    print("\n🎉 OutputProcessor 测试完成！统一数据流架构工作正常。")
+    print("\n🎉 MessageProcessor 测试完成！统一数据流架构工作正常。")
 
 
 if __name__ == "__main__":

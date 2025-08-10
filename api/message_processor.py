@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Output Processor - 统一数据流架构
-专注数据转换：将原始消息转换为统一的 StreamChunk 格式
-支持不同终端类型的分支处理
+Message Processor - 统一数据流架构
+将原始消息转换为统一的 StreamChunk 格式
 """
 
 import logging
@@ -10,13 +9,12 @@ import time
 from typing import Optional
 
 from .data_structures import StreamChunk, ChunkType, MetadataBuilder, TerminalType
-from .utils.formatter import clean_terminal_text
-from .utils.qcli_formatter import QcliOutputFormatter
+from .utils.ansi_formatter import ansi_formatter
 
 logger = logging.getLogger(__name__)
 
 
-class OutputProcessor:
+class MessageProcessor:
     """统一的输出处理器 - 实现统一数据流架构"""
     
     def __init__(self, terminal_type: TerminalType = TerminalType.GENERIC):
@@ -27,10 +25,6 @@ class OutputProcessor:
             terminal_type: 终端类型
         """
         self.terminal_type = terminal_type
-        
-        # 初始化格式化器
-        if terminal_type == TerminalType.QCLI:
-            self.qcli_formatter = QcliOutputFormatter()
     
     def process_raw_message(self, raw_message: str, command: str = "", 
                           terminal_type: Optional[TerminalType] = None) -> Optional[StreamChunk]:
@@ -53,7 +47,7 @@ class OutputProcessor:
         
         try:
             if current_terminal_type == TerminalType.QCLI:
-                return self._process_qcli_message(raw_message)
+                return self._process_qcli_message(raw_message, command)
             else:
                 return self._process_generic_message(raw_message, command)
                 
@@ -64,50 +58,10 @@ class OutputProcessor:
                 current_terminal_type.value,
                 "processing_error"
             )
-    
-    def _process_qcli_message(self, raw_message: str) -> Optional[StreamChunk]:
-        """
-        Q CLI 分支处理 - 简化版本，直接使用统一的ChunkType
-        
-        Args:
-            raw_message: 原始消息
-            
-        Returns:
-            StreamChunk: 处理后的数据块
-        """
-        # 1. 检测消息类型（直接返回统一的ChunkType）
-        chunk_type = self.qcli_formatter.detect_message_type(raw_message)
-        
-        # 2. 清理消息内容
-        clean_content = self.qcli_formatter.clean_qcli_output(raw_message)
-        
-        # 3. 根据类型决定内容
-        if chunk_type in [ChunkType.THINKING, ChunkType.TOOL_USE, ChunkType.COMPLETE]:
-            # 状态类型：不返回内容，但保留类型信息
-            content = ""
-        elif chunk_type == ChunkType.CONTENT:
-            # 内容类型：返回清理后的内容
-            content = clean_content
-            # 重要：不要过滤空格！单独的空格也是有效内容
-            # 这解决了空格丢失的问题
-        else:
-            # 其他类型
-            content = clean_content
-        
-        # 4. 构建元数据
-        metadata = self._build_qcli_metadata(raw_message, clean_content, chunk_type)
-        
-        # 5. 构建 StreamChunk
-        return StreamChunk(
-            content=content,
-            type=chunk_type,
-            metadata=metadata,
-            timestamp=time.time()
-        )
-    
+
     def _process_generic_message(self, raw_message: str, command: str) -> Optional[StreamChunk]:
         """
-        Generic 分支处理
+        Generic 分支处理 - 使用统一的ChunkType
         
         Args:
             raw_message: 原始消息
@@ -116,28 +70,95 @@ class OutputProcessor:
         Returns:
             StreamChunk: 处理后的数据块
         """
-        # 1. 清理消息内容
-        clean_content = self._clean_generic_content(raw_message, command)
+        # 1. 使用新的parse_terminal_output方法，一次获得内容和类型
+        clean_content, chunk_type = ansi_formatter.parse_terminal_output(raw_message)
         
-        # 2. 如果没有有效内容，跳过
-        if not clean_content.strip():
+        # 2. 移除命令回显（只对CONTENT类型的消息处理）
+        if chunk_type == ChunkType.CONTENT and command and command.strip():
+            clean_content = self._remove_command_echo(clean_content, command.strip())
+        
+        # 3. 如果没有有效内容且不是完成信号，跳过
+        if not clean_content.strip() and chunk_type != ChunkType.COMPLETE:
             return None
         
-        # 3. 构建元数据
-        metadata = MetadataBuilder.for_content(
-            len(raw_message),
-            len(clean_content),
-            "generic"
-        )
+        # 4. 根据类型决定返回的内容
+        if chunk_type == ChunkType.CONTENT:
+            content = clean_content
+        elif chunk_type == ChunkType.COMPLETE:
+            # 完成信号不返回内容给用户
+            content = ""
+        else:
+            content = clean_content
         
-        # 4. 构建 StreamChunk（通用终端默认为内容类型）
+        # 5. 构建 StreamChunk（通用终端不需要复杂的metadata）
         return StreamChunk(
-            content=clean_content,
-            type=ChunkType.CONTENT,
-            metadata=metadata,
+            content=content,
+            type=chunk_type,
+            metadata={"terminal_type": "generic"},
             timestamp=time.time()
         )
     
+    def _remove_command_echo(self, content: str, command: str, terminal_type: str = 'generic') -> str:
+        """移除命令回显"""
+        if not content or not command:
+            return content
+        
+        # 移除第一次出现的完整命令
+        if command in content:
+            content = content.replace(command, "", 1)
+            logger.debug(f"移除命令回显: {command}")
+        
+        if terminal_type == 'qcli':
+            return command
+
+        # 清理可能的多余空白
+        lines = content.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # 移除只包含空白字符的行
+            if line.strip():
+                cleaned_lines.append(line.rstrip())
+        
+        return '\n'.join(cleaned_lines)
+
+    def _process_qcli_message(self, raw_message: str, command: str) -> Optional[StreamChunk]:
+        """
+        Q CLI 分支处理 - 使用统一的ChunkType
+        
+        Args:
+            raw_message: 原始消息
+            command: 当前命令（预留）
+            
+        Returns:
+            StreamChunk: 处理后的数据块
+        """
+        # 1. 获得清理后的内容和类型
+        clean_content, chunk_type = ansi_formatter.parse_qcli_output(raw_message)
+        
+        # 2. 根据类型决定返回的内容
+        if chunk_type == ChunkType.CONTENT:
+            # 内容类型：移除命令回显后返回清理后的内容
+            # clean_content = self._remove_command_echo(clean_content, command.strip(), 'qcli')
+            content = clean_content
+        elif chunk_type in [ChunkType.THINKING, ChunkType.TOOL_USE, ChunkType.COMPLETE]:
+            # 状态类型：不返回内容给用户，但保留类型信息
+            content = ""
+        else:
+            # 其他类型
+            content = clean_content
+        
+        # 3. 构建元数据
+        metadata = self._build_qcli_metadata(raw_message, clean_content, chunk_type)
+        
+        # 4. 构建 StreamChunk
+        return StreamChunk(
+            content=content,
+            type=chunk_type,
+            metadata=metadata,
+            timestamp=time.time()
+        )
+
     def _build_qcli_metadata(self, raw_message: str, clean_content: str, 
                            chunk_type: ChunkType) -> dict:
         """构建 Q CLI 特定的元数据 - 简化版本"""
@@ -165,7 +186,7 @@ class OutputProcessor:
         import re
         
         # 清理后再提取
-        cleaned = self.qcli_formatter.clean_qcli_output(raw_message)
+        cleaned, _ = ansi_formatter.parse_qcli_output(raw_message)
         
         # 提取工具名称的模式
         patterns = [
@@ -180,52 +201,3 @@ class OutputProcessor:
                 return match.group(1)
         
         return "unknown_tool"
-    
-    def _clean_generic_content(self, raw_message: str, command: str) -> str:
-        """清理通用终端内容"""
-        # 1. 基础 ANSI 清理
-        cleaned = clean_terminal_text(raw_message)
-        
-        if not cleaned:
-            return ""
-        
-        # 2. 移除命令回显
-        if command and command in cleaned:
-            # 只移除第一次出现的命令
-            cleaned = cleaned.replace(command, "", 1)
-            logger.debug(f"移除命令回显: {command}")
-        
-        # 3. 额外清理
-        cleaned = self._additional_cleanup(cleaned)
-        
-        return cleaned
-    
-    def _additional_cleanup(self, text: str) -> str:
-        """额外的文本清理"""
-        if not text:
-            return ""
-        
-        # 移除多余的空白行
-        lines = text.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            # 移除只包含空白字符的行
-            if line.strip():
-                cleaned_lines.append(line.rstrip())
-        
-        # 重新组合，避免多余的空行
-        result = '\n'.join(cleaned_lines)
-        
-        # 移除开头和结尾的空白
-        result = result.strip()
-        
-        return result
-    
-    # 向后兼容的方法（保留旧接口，内部调用新接口）
-    def process_stream_output(self, raw_output: str, command: str) -> str:
-        """向后兼容：处理流式输出"""
-        chunk = self.process_raw_message(raw_output, command)
-        if chunk and chunk.type == ChunkType.CONTENT:
-            return chunk.content
-        return ""

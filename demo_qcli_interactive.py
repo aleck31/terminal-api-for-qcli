@@ -45,7 +45,7 @@ class QCLIInteractiveDemo:
         
         if success:
             print("✅ Q CLI 连接成功！")
-            print("💡 提示：输入 'help' 查看帮助，输入 'quit' 或 'exit' 退出")
+            print("💡 提示：输入 '/help' 查看帮助，输入 '/quit' 或 '/exit' 退出")
             return True
         else:
             print("❌ Q CLI 连接失败，请检查 Q CLI ttyd 服务是否启动")
@@ -60,8 +60,8 @@ class QCLIInteractiveDemo:
 📝 使用方法:
    - 直接输入任何问题或命令，Q CLI 会智能回答
    - 输出将实时显示思考过程、工具使用和回复内容
-   - 输入 'help' 显示此帮助
-   - 输入 'quit' 或 'exit' 退出程序
+   - 输入 '/help' 显示此帮助
+   - 输入 '/quit' 或 '/exit' 退出程序
    - 按 Ctrl+C 也可以退出
 
 🌟 示例问题:
@@ -181,9 +181,9 @@ class QCLIInteractiveDemo:
                     continue
                 
                 # 处理特殊命令
-                if question.lower() in ['quit', 'exit', 'q']:
+                if question.lower() in ['/quit', '/exit', 'exit']:
                     break
-                elif question.lower() in ['help', 'h', '?']:
+                elif question.lower() in ['/help', 'h', '?']:
                     self.show_help()
                     continue
                 elif question.lower() == 'clear':

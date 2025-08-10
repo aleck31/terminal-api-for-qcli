@@ -2,7 +2,6 @@
 """
 Terminal API Client
 主要API接口 - 组合各个组件提供统一服务
-职责：组件协调、状态管理、对外接口
 """
 
 import asyncio
@@ -10,11 +9,9 @@ import logging
 import time
 from typing import Optional, Callable, Dict, Any, AsyncIterator
 from enum import Enum
-from dataclasses import dataclass
-
 from .connection_manager import ConnectionManager
-from .command_executor import CommandExecutor, CommandResult
-from .output_processor import OutputProcessor
+from .command_executor import CommandExecutor
+from .message_processor import MessageProcessor
 from .data_structures import StreamChunk, ChunkType, TerminalType
 
 logger = logging.getLogger(__name__)
@@ -26,17 +23,6 @@ class TerminalBusinessState(Enum):
     BUSY = "busy"                  # 忙碌中，正在执行命令
     ERROR = "error"                # 错误状态
     UNAVAILABLE = "unavailable"    # 不可用（连接断开等）
-
-@dataclass
-class EnhancedCommandResult:
-    """增强的命令执行结果"""
-    command: str
-    output: str                     # 清理后的输出
-    formatted_output: Dict[str, Any]  # JSON 格式的格式化输出
-    success: bool
-    execution_time: float
-    exit_code: int                  # 命令退出码 (0=成功, 非0=失败)
-    error: Optional[str] = None
 
 class TerminalAPIClient:
     """终端API客户端 - 主要接口"""
@@ -73,10 +59,10 @@ class TerminalAPIClient:
             terminal_type=terminal_type
         )
         
-        # 创建对应的 OutputProcessor（使用统一的 TerminalType）
-        self._output_processor = OutputProcessor(terminal_type=terminal_type)
+        # 创建对应的 MessageProcessor
+        self._output_processor = MessageProcessor(terminal_type=terminal_type)
         
-        # 将 OutputProcessor 注入到 CommandExecutor
+        # 将 MessageProcessor 注入到 CommandExecutor
         self._command_executor.set_output_processor(self._output_processor)
         
         # 状态管理
@@ -152,38 +138,52 @@ class TerminalAPIClient:
                 logger.info(f"连接断开，终端状态设置为不可用")
 
     async def _consume_initialization_messages(self):
-        """
-        消费 Q CLI 初始化消息直到检测到结束标志
-        
-        简单逻辑：丢弃所有初始化消息，直到检测到 Q CLI 提示符
-        """
-        # 创建 QcliOutputFormatter 用于检测
-        from api.utils.qcli_formatter import QcliOutputFormatter
-        qcli_formatter = QcliOutputFormatter()
-        
+        """消费初始化消息(不对外显示初始化消息)"""
         initialization_complete = False
         message_count = 0
         
-        # 设置临时监听器丢弃初始化消息
-        def initialization_collector(raw_message):
-            nonlocal initialization_complete, message_count
-            message_count += 1
+        if self.terminal_type == TerminalType.QCLI:
+            # Q CLI 模式：等待提示符
+            from api.utils.ansi_formatter import ansi_formatter
             
-            # 使用 clean_and_detect_completion 检测结束标志
-            clean_message, is_complete = qcli_formatter.clean_and_detect_completion(raw_message)
+            def qcli_initialization_collector(raw_message):
+                nonlocal initialization_complete, message_count
+                message_count += 1
+
+                # 基于 ChunkType 检测结束标志
+                _, chunk_type = ansi_formatter.parse_qcli_output(raw_message)
+                if chunk_type.value == "complete":
+                    initialization_complete = True
+                    logger.info(f"检测到 Q CLI 提示符，初始化完成")
             
-            if is_complete:
-                initialization_complete = True
-                logger.info(f"检测到 Q CLI 提示符，初始化完成")
+            collector = qcli_initialization_collector
+            logger.info("开始消费 Q CLI 初始化消息...")
+            
+        else:
+            # GENERIC 模式：消费固定时间的消息
+            start_time = asyncio.get_event_loop().time()
+            consume_duration = 1.0  # 消费1秒的消息
+            
+            def generic_initialization_collector(raw_message):
+                nonlocal initialization_complete, message_count
+                message_count += 1
+                
+                # 检查是否已经消费足够长时间
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed >= consume_duration:
+                    initialization_complete = True
+                    logger.info(f"GENERIC 终端初始化消费完成，丢弃了 {message_count} 条消息")
+            
+            collector = generic_initialization_collector
+            logger.info(f"开始消费 GENERIC 终端初始化消息（{consume_duration}秒）...")
         
-        # 关键修复：先设置消息处理器，这样 WebSocket 消息才能传递到 ConnectionManager
+        # 设置消息处理器
         self._connection_manager.set_primary_handler(lambda msg: None)  # 临时处理器
         
         # 使用事件驱动：添加临时监听器，不影响主处理器
-        listener_id = self._connection_manager.add_temp_listener(initialization_collector)
+        listener_id = self._connection_manager.add_temp_listener(collector)
         
-        logger.info("开始消费 Q CLI 初始化消息...")
-        start_time = asyncio.get_event_loop().time()
+        initialization_start_time = asyncio.get_event_loop().time()
         
         try:
             # 等待直到检测到结束标志
@@ -191,14 +191,22 @@ class TerminalAPIClient:
             
             while not initialization_complete:
                 await asyncio.sleep(check_interval)
+
+                if self.terminal_type == TerminalType.GENERIC:
+                    elapsed = asyncio.get_event_loop().time() - initialization_start_time
+                    if elapsed > 1.1:  # 设置 1.1 秒超时
+                        logger.info(f"GENERIC 终端初始化完成. 已耗时 {elapsed:.1f}s")
+                        break
                 
-                # 每3秒报告一次进度
-                elapsed = asyncio.get_event_loop().time() - start_time
-                if int(elapsed) % 3 == 0 and elapsed > 0:
-                    logger.info(f"Q CLI 初始化进行中... 已耗时 {elapsed:.1f}s")
+                # Q CLI 进度报告（每3秒报告一次）
+                if self.terminal_type == TerminalType.QCLI:
+                    elapsed = asyncio.get_event_loop().time() - initialization_start_time
+                    if int(elapsed) % 3 == 0 and elapsed > 0:
+                        logger.info(f"Q CLI 初始化进行中... 已耗时 {elapsed:.1f}s")
             
-            total_time = asyncio.get_event_loop().time() - start_time
-            logger.info(f"Q CLI 初始化完成: 丢弃 {message_count} 条消息，耗时 {total_time:.1f}s")
+            total_time = asyncio.get_event_loop().time() - initialization_start_time
+            terminal_type_name = "Q CLI" if self.terminal_type == TerminalType.QCLI else "GENERIC"
+            logger.info(f"{terminal_type_name} 初始化完成: 丢弃 {message_count} 条消息，耗时 {total_time:.1f}s")
             
         finally:
             # 使用事件驱动：移除临时监听器
@@ -233,15 +241,9 @@ class TerminalAPIClient:
 
             logger.info("网络连接成功")
             
-            # 2. 根据终端类型处理初始化
+            # 2. 消费初始化消息（所有终端类型都需要）
             self._set_state(TerminalBusinessState.INITIALIZING)
-            
-            if self.terminal_type == TerminalType.QCLI:
-                # Q CLI 需要等待初始化消息和提示符
-                await self._consume_initialization_messages()
-            else:
-                # GENERIC 终端不需要等待，直接设置消息处理
-                logger.info("GENERIC 终端，跳过初始化消息等待")
+            await self._consume_initialization_messages()
             
             # 3. 设置正常的消息处理流程
             self._setup_normal_message_handling()

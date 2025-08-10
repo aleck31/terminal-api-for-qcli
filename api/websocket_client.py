@@ -182,9 +182,9 @@ class TtydWebSocketClient:
         try:
             # JSON初始化消息（ttyd双重认证的第二部分）
             init_data = {
-                "AuthToken": self.auth_token,
-                "columns": 120,
-                "rows": 42
+                # "columns": 120,
+                # "rows": 42,
+                "AuthToken": self.auth_token
             }
 
             # 发送JSON初始化消息

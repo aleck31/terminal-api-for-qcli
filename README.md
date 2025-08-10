@@ -24,13 +24,12 @@ terminal-api-for-qcli/
 ├── api/                         # 核心API组件
 │   ├── data_structures.py       # 统一数据结构定义
 │   ├── terminal_api_client.py   # 主要API接口
-│   ├── output_processor.py      # 统一消息处理器
+│   ├── message_processor.py      # 统一消息处理器
 │   ├── command_executor.py      # 命令执行器
 │   ├── connection_manager.py    # 连接管理器
 │   ├── websocket_client.py      # WebSocket客户端
 │   └── utils/                   # 工具组件
-│       ├── qcli_formatter.py    # Q CLI 格式化工具
-│       └── formatter.py         # 通用格式化工具
+│       └── ansi_formatter.py    # 统一ANSI处理工具
 ├── tests/                       # 测试套件
 │   └── run_tests.py             # 统一测试运行器
 ├── ttyd/                        # TTYD服务管理
@@ -54,7 +53,7 @@ terminal-api-for-qcli/
 - **单一职责**: 每层专注核心功能，组件间通过事件和回调通信
 - **统一格式**: 中间使用统一的 StreamChunk 数据结构
 - **延迟转换**: 只在最后一步转换为API格式
-- **集中处理**: 错误处理和格式化集中在 OutputProcessor
+- **集中处理**: 错误处理和格式化集中在 MessageProcessor
 
 ### 架构层次
 ```
@@ -66,7 +65,7 @@ terminal-api-for-qcli/
 │  • Component lifecycle management                            │
 │  • Business state management (IDLE, BUSY, ERROR, etc.)       │
 ├──────────────────────────────────────────────────────────────┤
-│  ConnectionManager │  CommandExecutor   │  OutputProcessor   │
+│  ConnectionManager │  CommandExecutor   │  MessageProcessor   │
 │  (Connection Mgmt) │  (Command Exec)    │  (Output Process)  │
 │  • Connection      │  • Stateless cmd   │  • Data cleaning   │
 │    lifecycle       │    execution       │    & conversion    │
@@ -83,7 +82,7 @@ terminal-api-for-qcli/
 
 ### 数据流程
 ```
-TtydWebSocketClient → ConnectionManager → CommandExecutor → OutputProcessor → TerminalAPIClient
+TtydWebSocketClient → ConnectionManager → CommandExecutor → MessageProcessor → TerminalAPIClient
     ↓                     ↓                   ↓                 ↓                ↓
   原始数据               事件分发             检测逻辑            统一处理          API结构化输出
 ```
@@ -91,7 +90,7 @@ TtydWebSocketClient → ConnectionManager → CommandExecutor → OutputProcesso
 #### **🔧 组件职责**
 - **`TerminalAPIClient`** - 业务协调层，负责组件协调、业务状态管理和连接状态映射
 - **`CommandExecutor`** - 无状态命令执行工具，专注命令执行逻辑和活跃性/完成检测
-- **`OutputProcessor`** - 统一数据处理器，专注数据转换和消息类型识别
+- **`MessageProcessor`** - 统一数据处理器，专注数据转换和消息类型识别
 - **`ConnectionManager`** - 连接管理器，管理连接生命周期和事件驱动消息分发
 - **`TtydWebSocketClient`** - 协议实现层，处理 ttyd 协议和 WebSocket 通信
 

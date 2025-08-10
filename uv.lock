@@ -483,6 +483,15 @@ wheels = [
 ]
 
 [[package]]
+name = "ochre"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/dc/c9f58298ce87564913e3e3c2eac0c9c1d93fe5d864d54975a66820bd6a44/ochre-0.4.0.tar.gz", hash = "sha256:ecbd7632416038f925dc1cc7446c2b863246c36a1c44bb73d7e0fcc773e3c716", size = 10022, upload-time = "2021-12-19T23:40:35.23Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/58/5d62363742a0fe4e7d3b4d596f80ccdbcdfd281d647e89698a31fc27f8e9/ochre-0.4.0-py3-none-any.whl", hash = "sha256:6d64b3a055b455103cb90ea6c1cf7c15519b7dd146e3ff2677481a33f54b885b", size = 9642, upload-time = "2021-12-19T23:40:33.26Z" },
+]
+
+[[package]]
 name = "orjson"
 version = "3.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -875,12 +884,25 @@ wheels = [
 ]
 
 [[package]]
+name = "stransi"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ochre" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/96/d72e9fd64f11502e37ec397a912bba4a81cbe195a07e0cd4d5b5a6268de7/stransi-0.3.0.tar.gz", hash = "sha256:2ba0195f935a8a152ad1921b25e14e7e78c549948d2ef0f63a6a5d9ab4625830", size = 8377, upload-time = "2021-12-20T00:22:28.544Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/10/71eff1dc5f6e97b1d245c9efb96cc7e581340fe6218bb4744e0e2f130859/stransi-0.3.0-py3-none-any.whl", hash = "sha256:7082fe969abca1059437a45b81c3b05a2eb1362503487bd35bd1d8919af3f0a4", size = 9622, upload-time = "2021-12-20T00:22:26.606Z" },
+]
+
+[[package]]
 name = "terminal-api-for-qcli"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "gradio" },
     { name = "requests" },
+    { name = "stransi" },
     { name = "websockets" },
 ]
 
@@ -888,6 +910,7 @@ dependencies = [
 requires-dist = [
     { name = "gradio", specifier = ">=5.0.0" },
     { name = "requests", specifier = ">=2.25.0" },
+    { name = "stransi", specifier = ">=0.3.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
 

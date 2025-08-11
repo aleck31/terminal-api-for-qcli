@@ -160,10 +160,6 @@ def test_utility_functions():
         assert is_user_visible_content(content_chunk) == True
         print("✅ 用户可见内容判断正确")
     
-    # 测试向后兼容方法
-    legacy_output = processor.process_stream_output("test output", "test")
-    print(f"向后兼容输出: {repr(legacy_output)}")
-    
     print("✅ 工具函数测试通过")
 
 

@@ -90,11 +90,15 @@ class MessageProcessor:
         else:
             content = clean_content
         
-        # 5. 构建 StreamChunk（通用终端不需要复杂的metadata）
+        # 5. 构建 StreamChunk
         return StreamChunk(
             content=content,
             type=chunk_type,
-            metadata={"terminal_type": "generic"},
+            metadata=MetadataBuilder.for_content(
+                len(raw_message),
+                len(content),
+                "generic"
+            ),
             timestamp=time.time()
         )
     

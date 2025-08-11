@@ -91,14 +91,16 @@ class AnsiFormatter:
         return clean_text, message_type
     
     def _detect_terminal_prompt_regex(self, raw_text: str) -> bool:
-        """使用正则表达式检测通用终端提示符"""
-        prompt_patterns = [
-            r'[a-zA-Z0-9_-]+@[a-zA-Z0-9_.-]+:[^$]*\$\s',  # user@host:path$ 
-            r'\$\s*$',  # 简单$提示符结尾
-            r'#\s*$',   # root提示符结尾
+        """检测终端完成信号"""
+
+        # 检测OSC 697序列（不依赖于shell配置）
+        osc_patterns = [
+            r'\x1b\]697;NewCmd=',     # 新命令开始（最可靠的完成信号）
+            r'\x1b\]697;ExitCode=',   # 命令退出码（命令执行完成）
+            r'\x1b\]697;EndPrompt\x07', # 提示符结束
         ]
-        
-        for pattern in prompt_patterns:
+
+        for pattern in osc_patterns:
             if re.search(pattern, raw_text):
                 return True
         

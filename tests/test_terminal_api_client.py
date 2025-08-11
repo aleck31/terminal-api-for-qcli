@@ -227,7 +227,11 @@ async def test_execute_command_stream_qcli():
                 StreamChunk(
                     content="",
                     type=ChunkType.COMPLETE,
-                    metadata=MetadataBuilder.for_complete(2.5, True, "qcli"),
+                    metadata={
+                        "execution_time": 2.5,
+                        "command_success": True,
+                        "terminal_type": "qcli"
+                    },
                     timestamp=1234567890.3
                 )
             ]

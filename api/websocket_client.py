@@ -5,14 +5,14 @@ ttyd WebSocket客户端
 
 import asyncio
 import websockets
+from websockets import ClientConnection
+from websockets.protocol import State
 import base64
 import json
 import logging
-import re
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class TtydWebSocketClient:
         self.use_ssl = use_ssl
 
         # WebSocket连接
-        self.websocket: Optional[websockets.WebSocketServerProtocol] = None
+        self.ws_connection: Optional[ClientConnection] = None
         self._protocol_state = TtydProtocolState.DISCONNECTED
 
         # 回调处理器
@@ -101,23 +101,18 @@ class TtydWebSocketClient:
     @property
     def is_protocol_ready(self) -> bool:
         """检查协议是否就绪"""
-        return (self.websocket is not None and 
+        return (self.ws_connection is not None and 
                 self._protocol_state == TtydProtocolState.PROTOCOL_READY and
                 self._is_websocket_alive())
 
     def _is_websocket_alive(self) -> bool:
         """检查底层WebSocket连接是否存活"""
-        if self.websocket is None:
+        if self.ws_connection is None:
             return False
         
         try:
-            # 兼容不同版本的websockets库
-            if hasattr(self.websocket, 'close_code'):
-                return self.websocket.close_code is None
-            elif hasattr(self.websocket, 'closed'):
-                return not self.websocket.closed
-            else:
-                return True  # 回退到假设连接正常
+            # 使用 websockets (15.x) state检查
+            return self.ws_connection.state == State.OPEN
         except Exception:
             return False
 
@@ -144,9 +139,9 @@ class TtydWebSocketClient:
             logger.info(f"连接到ttyd服务器: {self.url}")
 
             # WebSocket握手时提供HTTP基本认证头
-            self.websocket = await websockets.connect(
+            self.ws_connection = await websockets.connect(
                 self.url,
-                subprotocols=['tty'],
+                subprotocols=['tty'],  # type: ignore
                 additional_headers={
                     "Authorization": f"Basic {self.auth_token}"
                 },
@@ -189,7 +184,7 @@ class TtydWebSocketClient:
 
             # 发送JSON初始化消息
             init_message = json.dumps(init_data)
-            await self.websocket.send(init_message)
+            await self.ws_connection.send(init_message)  # type: ignore
             logger.info("发送ttyd初始化消息成功")
 
         except Exception as e:
@@ -210,14 +205,14 @@ class TtydWebSocketClient:
                 pass
 
         # 关闭WebSocket连接
-        if self.websocket:
+        if self.ws_connection:
             try:
                 if self._is_websocket_alive():
-                    await self.websocket.close()
+                    await self.ws_connection.close()
             except Exception as e:
                 logger.warning(f"关闭WebSocket时出错: {e}")
 
-        self.websocket = None
+        self.ws_connection = None
         self._set_protocol_state(TtydProtocolState.DISCONNECTED)
         logger.info("ttyd连接已断开")
 
@@ -240,7 +235,7 @@ class TtydWebSocketClient:
 
             # ttyd协议：INPUT命令 = '0' + 数据
             message = '0' + command
-            await self.websocket.send(message)
+            await self.ws_connection.send(message)  # type: ignore
             logger.debug(f"发送命令 ({terminal_type}): {repr(command.strip())}")
             return True
 
@@ -260,7 +255,7 @@ class TtydWebSocketClient:
         try:
             # ttyd协议：INPUT命令 = '0' + 数据
             message = '0' + data
-            await self.websocket.send(message)
+            await self.ws_connection.send(message)  # type: ignore
             logger.debug(f"发送输入: {repr(data)}")
             return True
 
@@ -284,7 +279,7 @@ class TtydWebSocketClient:
                 "rows": rows
             }
             message = '1' + json.dumps(resize_data)
-            await self.websocket.send(message)
+            await self.ws_connection.send(message)  # type: ignore
             logger.debug(f"调整终端大小: {rows}x{cols}")
             return True
 
@@ -298,7 +293,7 @@ class TtydWebSocketClient:
         logger.info("开始监听ttyd消息")
 
         try:
-            while not self._should_stop and self.websocket:
+            while not self._should_stop and self.ws_connection:
                 try:
                     # 检查连接状态
                     if not self._is_websocket_alive():
@@ -307,7 +302,7 @@ class TtydWebSocketClient:
 
                     # 接收消息
                     message = await asyncio.wait_for(
-                        self.websocket.recv(),
+                        self.ws_connection.recv(),
                         timeout=1.0
                     )
 

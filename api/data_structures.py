@@ -104,15 +104,6 @@ class MetadataBuilder:
         }
     
     @staticmethod
-    def for_complete(execution_time: float, command_success: bool, terminal_type: str) -> Dict[str, Any]:
-        """完成状态的元数据"""
-        return {
-            "execution_time": execution_time,
-            "command_success": command_success,
-            "terminal_type": terminal_type
-        }
-    
-    @staticmethod
     def for_error(error_message: str, terminal_type: str, error_type: str = "execution_error") -> Dict[str, Any]:
         """错误状态的元数据"""
         return {

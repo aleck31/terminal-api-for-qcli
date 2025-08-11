@@ -93,7 +93,11 @@ def test_utility_functions():
     complete_chunk = StreamChunk(
         content="",
         type=ChunkType.COMPLETE,
-        metadata=MetadataBuilder.for_complete(2.5, True, "qcli"),
+        metadata={
+            "execution_time": 2.5,
+            "command_success": True,
+            "terminal_type": "qcli"
+        },
         timestamp=1234567890.0
     )
     
@@ -140,7 +144,11 @@ def test_real_world_scenarios():
     complete = StreamChunk(
         content="",
         type=ChunkType.COMPLETE,
-        metadata=MetadataBuilder.for_complete(2.34, True, "qcli"),
+        metadata={
+            "execution_time": 2.34,
+            "command_success": True,
+            "terminal_type": "qcli"
+        },
         timestamp=1234567890.2
     )
     

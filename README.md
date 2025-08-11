@@ -38,9 +38,8 @@ terminal-api-for-qcli/
 ├── webui/                       # Web UI
 │   └── gradio_chat.py           # Gradio ChatInterface WebUI
 ├── docs/                        # 文档目录
-│   ├── unified_data_flow_design.md # 🆕 统一数据流架构设计
-│   ├── connection_state_design.md  # 连接状态管理设计
-│   └── terminal_api_client_redesign.md # 业务层重构设计
+│   ├── unified_data_flow_design.md # 统一数据流设计文档
+│   └── ttyd-protocol-dev-guide.md  # TTYD WebSocket 协议开发指南
 ├── start-webui.sh               # Gradio WebUI 启动脚本
 ├── demo_qterm_interactive.py          # 命令行演示
 └── README.md
@@ -65,7 +64,7 @@ terminal-api-for-qcli/
 │  • Component lifecycle management                            │
 │  • Business state management (IDLE, BUSY, ERROR, etc.)       │
 ├──────────────────────────────────────────────────────────────┤
-│  ConnectionManager │  CommandExecutor   │  MessageProcessor   │
+│  ConnectionManager │  CommandExecutor   │  MessageProcessor  │
 │  (Connection Mgmt) │  (Command Exec)    │  (Output Process)  │
 │  • Connection      │  • Stateless cmd   │  • Data cleaning   │
 │    lifecycle       │    execution       │    & conversion    │
@@ -77,14 +76,8 @@ terminal-api-for-qcli/
 │  • WebSocket connection establish/disconnect                 │
 │  • ttyd message format processing                            │
 │  • Authentication handling                                   │
+│  • websockets 15.x ClientConnection API                      │
 └──────────────────────────────────────────────────────────────┘
-```
-
-### 数据流程
-```
-TtydWebSocketClient → ConnectionManager → CommandExecutor → MessageProcessor → TerminalAPIClient
-    ↓                     ↓                   ↓                 ↓                ↓
-  原始数据               事件分发             检测逻辑            统一处理          API结构化输出
 ```
 
 #### **🔧 组件职责**
@@ -94,7 +87,7 @@ TtydWebSocketClient → ConnectionManager → CommandExecutor → MessageProcess
 - **`ConnectionManager`** - 连接管理器，管理连接生命周期和事件驱动消息分发
 - **`TtydWebSocketClient`** - 协议实现层，处理 ttyd 协议和 WebSocket 通信
 
-#### **🔄 状态管理设计**
+#### **🔄 状态管理**
 - **协议状态** (TtydWebSocketClient): `DISCONNECTED` → `CONNECTING` → `AUTHENTICATING` → `PROTOCOL_READY`
 - **连接状态** (ConnectionManager): `IDLE` → `CONNECTING` → `CONNECTED` / `FAILED` → `DISCONNECTED`
 - **业务状态** (TerminalAPIClient): `INITIALIZING` → `IDLE` → `BUSY` → `IDLE` (循环)
@@ -150,6 +143,31 @@ async def chat_with_qcli():
 asyncio.run(chat_with_qcli())
 ```
 
+### 通用终端使用
+
+```python
+async def use_generic_terminal():
+    async with TerminalAPIClient(
+        host="localhost", 
+        port=7681,
+        terminal_type=TerminalType.GENERIC
+    ) as client:
+        
+        commands = ["pwd", "ls -la", "echo 'Hello World'"]
+        
+        for cmd in commands:
+            print(f"\n执行命令: {cmd}")
+            async for chunk in client.execute_command_stream(cmd):
+                if chunk.get("type") == "content":
+                    print(chunk["content"], end="")
+                elif chunk.get("type") == "complete":
+                    success = chunk.get("metadata", {}).get("command_success", False)
+                    print(f"\n命令完成，成功: {success}")
+                    break
+
+asyncio.run(use_generic_terminal())
+```
+
 ### 高级用法 - 状态感知
 
 ```python
@@ -180,31 +198,6 @@ async def advanced_qcli_chat():
                 break
 
 asyncio.run(advanced_qcli_chat())
-```
-
-### 通用终端使用
-
-```python
-async def use_generic_terminal():
-    async with TerminalAPIClient(
-        host="localhost", 
-        port=7681,
-        terminal_type=TerminalType.GENERIC
-    ) as client:
-        
-        commands = ["pwd", "ls -la", "echo 'Hello World'"]
-        
-        for cmd in commands:
-            print(f"\n执行命令: {cmd}")
-            async for chunk in client.execute_command_stream(cmd):
-                if chunk.get("type") == "content":
-                    print(chunk["content"], end="")
-                elif chunk.get("type") == "complete":
-                    success = chunk.get("metadata", {}).get("command_success", False)
-                    print(f"\n命令完成，成功: {success}")
-                    break
-
-asyncio.run(use_generic_terminal())
 ```
 
 ## 🛠️ 服务管理

@@ -7,10 +7,13 @@ Command Executor
 import asyncio
 import logging
 import time
-from typing import Optional, Callable
+from typing import Optional, Callable, TYPE_CHECKING
 from dataclasses import dataclass
 from .connection_manager import ConnectionManager
 from .data_structures import TerminalType
+
+if TYPE_CHECKING:
+    from .data_structures import StreamChunk
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +105,7 @@ class CommandExecutor:
         
         # 输出处理器（由外部注入）
         self.message_processor = None
-        self.stream_callback: Optional[Callable[[str], None]] = None
+        self.stream_callback: Optional[Callable[['StreamChunk'], None]] = None
     
     def set_output_processor(self, message_processor):
         """设置输出处理器"""
@@ -122,6 +125,10 @@ class CommandExecutor:
             self.current_execution.update_activity()
             
             # 2. 使用MessageProcessor处理消息
+            if not self.message_processor:
+                logger.warning("MessageProcessor未设置，跳过消息处理")
+                return
+                
             stream_chunk = self.message_processor.process_raw_message(
                 raw_message=raw_message,
                 command=self.current_execution.command,
@@ -131,6 +138,12 @@ class CommandExecutor:
             # 3. 检查是否完成（利用MessageProcessor的检测结果）
             if stream_chunk and stream_chunk.type.value == "complete":
                 logger.debug(f"检测到命令完成：{self.terminal_type.value}")
+                
+                # 注入执行时间到metadata中
+                if self.current_execution:
+                    stream_chunk.metadata["execution_time"] = self.current_execution.execution_time
+                    stream_chunk.metadata["command_success"] = True  # 能检测到完成说明命令成功
+                
                 self.current_execution.complete_event.set()
             
             # 4. 调用StreamChunk回调

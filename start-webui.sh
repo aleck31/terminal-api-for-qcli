@@ -19,11 +19,11 @@ echo "✅ uv 已安装"
 
 # 检查Terminal API服务状态
 echo "🔍 检查Terminal API服务..."
-if curl -u demo:password123 http://localhost:7681 -I -s > /dev/null 2>&1; then
+if curl -u demo:password123 http://localhost:7682 -I -s > /dev/null 2>&1; then
     echo "✅ Terminal API服务运行正常"
 else
     echo "⚠️  Terminal API服务未运行，正在启动..."
-    ./ttyd/ttyd-service.sh start bash 7681
+    ./ttyd/ttyd-service.sh start qcli 7682
     if [ $? -eq 0 ]; then
         echo "✅ Terminal API服务启动成功"
     else
@@ -36,12 +36,11 @@ fi
 cd "$(dirname "$0")"
 
 # 使用uv运行Gradio应用
-PYTHONPATH=. uv run python webui/gradio_chat.py
+PYTHONPATH=. uv run webui/gradio_chat.py
 
 echo
 echo "🚀 使用uv启动Gradio WebUI..."
-echo "访问地址: http://localhost:7860"
-echo "Terminal API: http://localhost:7681"
+echo "访问地址: http://localhost:8080"
 echo
 echo "✨ 功能特性:"
 echo "- 智能命令解析和执行"

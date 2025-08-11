@@ -110,7 +110,7 @@ terminal-api-for-qcli/
 
 ### 2. 访问界面
 
-- **Web UI**: http://localhost:7860 (Chatbot)
+- **Web UI**: http://localhost:8080 (Chatbot)
 - **通用终端**: http://localhost:7681
 - **Q CLI 终端**: http://localhost:7682
 - **交互演示**: `uv run python demo_qterm_interactive.py`

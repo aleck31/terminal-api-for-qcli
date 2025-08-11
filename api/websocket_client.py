@@ -177,8 +177,8 @@ class TtydWebSocketClient:
         try:
             # JSON初始化消息（ttyd双重认证的第二部分）
             init_data = {
-                # "columns": 120,
-                # "rows": 42,
+                "columns": 240, # 默认 80
+                "rows": 60, # 默认 24
                 "AuthToken": self.auth_token
             }
 
